@@ -88,7 +88,7 @@ static const char *version_str = "1.36 20191220";
 
 static int sum_of_resids = 0;
 
-static int64_t dd_count = -1;
+static int64_t total_blocks_to_read = -1;
 static int64_t orig_count = 0;
 static int64_t in_full = 0;
 static int in_partial = 0;
@@ -112,8 +112,8 @@ static void install_handler(int sig_num, void (*sig_handler)(int sig)) {
 
 static void print_stats(int iters, const char *str) {
   if (orig_count > 0) {
-    if (0 != dd_count)
-      pr2serr("  remaining block count=%" PRId64 "\n", dd_count);
+    if (0 != total_blocks_to_read)
+      pr2serr("  remaining block count=%" PRId64 "\n", total_blocks_to_read);
     pr2serr("%" PRId64 "+%d records in", in_full - in_partial, in_partial);
     if (iters > 0)
       pr2serr(", %s commands issued: %d\n", (str ? str : ""), iters);
@@ -271,43 +271,117 @@ static int sg_build_scsi_cdb(uint8_t *cdbp, int cdb_sz, unsigned int blocks,
   return 0;
 }
 
-/* -3 medium/hardware error, -2 -> not ready, 0 -> successful,
-   1 -> recoverable (ENOMEM), 2 -> try again (e.g. unit attention),
-   3 -> try again (e.g. aborted command), -1 -> other unrecoverable error */
-static int sg_bread(int sg_fd, uint8_t *buff, int blocks, int64_t from_block,
-                    int bs, int cdbsz, bool fua, bool dpo, bool *diop,
-                    bool do_mmap, bool no_dxfer) {
+/**
+ * 函数功能：
+ *
+ * 发起对设备的读操作
+ *
+ * 输入参数：
+ *    infd:       文件句柄
+ *    wrkPos:     内存位置
+ *    blocks:     要读的blocks的数目
+ *    skip:       从哪里开始读?
+ *    bs:         block的大小
+ *    scsi_cdbsz: cmd缓冲区的大小
+ *    fua:        fua要用吗？
+ *    dpo:        device cache要不要被调度出去!
+ *    &dio_tmp:   dio_tmp这个值有可能被改变
+ *    do_mmap:    是否使用mmap
+ *    no_dxfer:   1, 那么就是会走到kernel buffer就结束
+ *
+ * 返回值:
+ *
+ *  -3: medium/hardware error,
+ *  -2: not ready, 0 -> successful
+ *   1: recoverable (ENOMEM)
+ *   2: try again (e.g. unit attention),
+ *   3: try again (e.g. aborted command)
+ *  -1: other unrecoverable error
+ */
+static int sg_bread(int sg_fd,
+                    uint8_t *buff,
+                    int blocks,
+                    int64_t from_block,
+                    int bs,
+                    int cdbsz,
+                    bool fua,
+                    bool dpo,
+                    bool *diop,
+                    bool do_mmap,
+                    bool no_dxfer)
+{
   uint8_t rdCmd[MAX_SCSI_CDBSZ];
   uint8_t senseBuff[SENSE_BUFF_LEN];
   struct sg_io_hdr io_hdr;
 
-  if (sg_build_scsi_cdb(rdCmd, cdbsz, blocks, from_block, false, fua, dpo)) {
-    pr2serr(ME "bad cdb build, from_block=%" PRId64 ", blocks=%d\n", from_block,
+  printf("from_block = %d\n", from_block);
+
+  // 构建scsi_cdb命令
+  if (sg_build_scsi_cdb(rdCmd,
+                        cdbsz,
+                        blocks,     // 要读多少个blocks
+                        from_block, // 从哪个block开始读
+                        false,
+                        fua,
+                        dpo)) {
+
+    pr2serr(ME "bad cdb build, from_block=%" PRId64 ", blocks=%d\n",
+            from_block,
             blocks);
     return -1;
   }
+
   memset(&io_hdr, 0, sizeof(struct sg_io_hdr));
+
+  // interface_id：一般应该设置为 S。 
   io_hdr.interface_id = 'S';
+
+  // cmd_len：指向 SCSI 命令的 cmdp 的字节长度。 
   io_hdr.cmd_len = cdbsz;
+
+  // cmdp：指向将要执行的 SCSI 命令的指针。 
   io_hdr.cmdp = rdCmd;
+
   if (blocks > 0) {
+    // dxfer_direction：用于确定数据传输的方向；常常使用以下值之一： 
+    // SG_DXFER_NONE：不需要传输数据。比如 SCSI Test Unit Ready 命令。 
+    // SG_DXFER_TO_DEV：将数据传输到设备。使用 SCSI WRITE 命令。 
+    // SG_DXFER_FROM_DEV：从设备输出数据。使用 SCSI READ 命令。 
+    // SG_DXFER_TO_FROM_DEV：双向传输数据。 
+    // SG_DXFER_UNKNOWN：数据的传输方向未知。 
     io_hdr.dxfer_direction = SG_DXFER_FROM_DEV;
+
+    // dxfer_len：数据传输的用户内存的长度。 
     io_hdr.dxfer_len = bs * blocks;
-    /* next: shows dxferp unused during mmap-ed IO */
-    if (!do_mmap)
+
+    // next: shows dxferp unused during mmap-ed IO
+    if (!do_mmap) {
+      // dxferp：指向数据传输时长度至少为 dxfer_len
+      // 字节的用户内存的指针。 
       io_hdr.dxferp = buff;
-    if (diop && *diop)
+    }
+    
+    if (diop && *diop) {
       io_hdr.flags |= SG_FLAG_DIRECT_IO;
-    else if (do_mmap)
+    } else if (do_mmap) {
       io_hdr.flags |= SG_FLAG_MMAP_IO;
-    else if (no_dxfer)
+    } else if (no_dxfer) {
       io_hdr.flags |= SG_FLAG_NO_DXFER;
-  } else
+    }
+
+  } else {
     io_hdr.dxfer_direction = SG_DXFER_NONE;
+  }
+
+  // mx_sb_len：当 sense_buffer 为输出时，可以写回到 sbp 的最大大小。 
   io_hdr.mx_sb_len = SENSE_BUFF_LEN;
+  // sbp：缓冲检测指针。 
   io_hdr.sbp = senseBuff;
+  // timeout：用于使特定命令超时。 
   io_hdr.timeout = DEF_TIMEOUT;
+  // 发送的数据包的序号
   io_hdr.pack_id = pack_id_count++;
+
   if (verbose > 1) {
     char b[128];
 
@@ -322,41 +396,54 @@ static int sg_bread(int sg_fd, uint8_t *buff, int blocks, int64_t from_block,
     return -1;
   }
 
-  if (verbose > 2)
+  if (verbose > 2) {
     pr2serr("      duration=%u ms\n", io_hdr.duration);
+  }
+
+  // 这里进行处理出错!
   switch (sg_err_category3(&io_hdr)) {
   case SG_LIB_CAT_CLEAN:
+    printf("cat_clean\n");
     break;
   case SG_LIB_CAT_RECOVERED:
-    if (verbose > 1)
+    if (verbose > 1) {
       sg_chk_n_print3("reading, continue", &io_hdr, true);
+    }
     break;
   case SG_LIB_CAT_UNIT_ATTENTION:
-    if (verbose)
+    if (verbose) {
       sg_chk_n_print3("reading", &io_hdr, (verbose > 1));
+    }
     return 2;
   case SG_LIB_CAT_ABORTED_COMMAND:
-    if (verbose)
+    if (verbose) {
       sg_chk_n_print3("reading", &io_hdr, (verbose > 1));
+    }
     return 3;
   case SG_LIB_CAT_NOT_READY:
-    if (verbose)
+    if (verbose) {
       sg_chk_n_print3("reading", &io_hdr, (verbose > 1));
+    }
     return -2;
   case SG_LIB_CAT_MEDIUM_HARD:
-    if (verbose)
+    if (verbose) {
       sg_chk_n_print3("reading", &io_hdr, (verbose > 1));
+    }
     return -3;
   default:
     sg_chk_n_print3("reading", &io_hdr, !!verbose);
     return -1;
   }
+
   if (blocks > 0) {
     if (diop && *diop &&
-        ((io_hdr.info & SG_INFO_DIRECT_IO_MASK) != SG_INFO_DIRECT_IO))
+        ((io_hdr.info & SG_INFO_DIRECT_IO_MASK) != SG_INFO_DIRECT_IO)) {
       *diop = 0; /* flag that dio not done (completely) */
+      printf("diop not done (completely)\n");
+    }
     sum_of_resids += io_hdr.resid;
   }
+
   return 0;
 }
 
@@ -382,7 +469,7 @@ int main(int argc, char *argv[]) {
   // multiple read operations. When COUNT is negative then |COUNT| SCSI READ
   // commands are performed requesting zero blocks to be transferred. This
   // option is mandatory.
-  bool count_given = false;
+  bool has_set_count = false;
 
   bool dio_tmp;
 
@@ -532,7 +619,6 @@ int main(int argc, char *argv[]) {
 
   int res;
   int k;
-  int t;
   int buf_sz;
   int iters;
   int infd;
@@ -621,17 +707,17 @@ int main(int argc, char *argv[]) {
     // count: total bytes read will be BS*COUNT (if no error)
     // 总共会读的bytes = BS * COUNT
     else if (0 == strcmp(key, "count")) {
-      count_given = true;
+      has_set_count = true;
       if ('-' == *buf) {
-        dd_count = sg_get_llnum(buf + 1);
-        if (-1 == dd_count) {
+        total_blocks_to_read = sg_get_llnum(buf + 1);
+        if (-1 == total_blocks_to_read) {
           pr2serr(ME "bad argument to 'count'\n");
           return SG_LIB_SYNTAX_ERROR;
         }
-        dd_count = -dd_count;
+        total_blocks_to_read = -total_blocks_to_read;
       } else {
-        dd_count = sg_get_llnum(buf);
-        if (-1 == dd_count) {
+        total_blocks_to_read = sg_get_llnum(buf);
+        if (-1 == total_blocks_to_read) {
           pr2serr(ME "bad argument to 'count'\n");
           return SG_LIB_SYNTAX_ERROR;
         }
@@ -766,13 +852,13 @@ int main(int argc, char *argv[]) {
   // block_size
   if (bs <= 0) {
     bs = DEF_BLOCK_SIZE;
-    if ((dd_count > 0) && (bpt > 0))
+    if ((total_blocks_to_read > 0) && (bpt > 0))
       pr2serr("Assume default 'bs' (block size) of %d bytes\n", bs);
   }
 
   // 总共需要读的block数目
   // block / bpt = 发送的read cmd的次数
-  if (!count_given) {
+  if (!has_set_count) {
     pr2serr("'count' must be given\n");
     usage();
     return SG_LIB_SYNTAX_ERROR;
@@ -785,8 +871,8 @@ int main(int argc, char *argv[]) {
 
   if (bpt < 1) {
     if (0 == bpt) {
-      if (dd_count > 0)
-        dd_count = -dd_count;
+      if (total_blocks_to_read > 0)
+        total_blocks_to_read = -total_blocks_to_read;
     } else {
       pr2serr("bpt must be greater than 0\n");
       return SG_LIB_SYNTAX_ERROR;
@@ -842,7 +928,7 @@ int main(int argc, char *argv[]) {
 
 
   if (FT_SG & in_type) {
-    if ((dd_count < 0) && (6 == scsi_cdbsz)) {
+    if ((total_blocks_to_read < 0) && (6 == scsi_cdbsz)) {
       pr2serr(ME "SCSI READ (6) can't do zero block reads\n");
       return SG_LIB_SYNTAX_ERROR;
     }
@@ -871,8 +957,8 @@ int main(int argc, char *argv[]) {
     }
 
     // 不会跳到这里来，先不用看
-    // dd_count = 1
-    if ((dd_count > 0) && (!(FT_BLOCK & in_type))) {
+    // total_blocks_to_read = 1
+    if ((total_blocks_to_read > 0) && (!(FT_BLOCK & in_type))) {
       assert(0);
       // deleted code
     }
@@ -881,21 +967,20 @@ int main(int argc, char *argv[]) {
     // deleted code
   }
 
-  if (0 == dd_count)
-    return 0;
+  assert(total_blocks_to_read > 0);
 
-  orig_count = dd_count;
+  orig_count = total_blocks_to_read;
 
-  if (dd_count > 0) {
+  if (total_blocks_to_read > 0) {
     if (do_dio || do_odir || (FT_RAW & in_type)) {
-      wrkBuff = (uint8_t *)malloc(bs * bpt + psz);
-      if (0 == wrkBuff) {
-        pr2serr("Not enough user memory for aligned storage\n");
-        return SG_LIB_CAT_OTHER;
-      }
-      /* perhaps use posix_memalign() instead */
-      wrkPos = (uint8_t *)(((sg_uintptr_t)wrkBuff + psz - 1) & (~(psz - 1)));
+      // 必须要走这里过!
+      // 申请好内存!
+      assert(0 == posix_memalign(&wrkBuff, 4096, bs * bpt + psz));
+      assert(wrkBuff);
+      wrkPos = wrkBuff;
     } else if (do_mmap) {
+      assert(0);
+      // 如果走mmap!
       wrkPos = (uint8_t *)mmap(NULL, bs * bpt, PROT_READ | PROT_WRITE,
                                MAP_SHARED, infd, 0);
       if (MAP_FAILED == wrkPos) {
@@ -903,6 +988,8 @@ int main(int argc, char *argv[]) {
         return SG_LIB_CAT_OTHER;
       }
     } else {
+      assert(0);
+      // 如果malloc!
       wrkBuff = (uint8_t *)malloc(bs * bpt);
       if (0 == wrkBuff) {
         pr2serr("Not enough user memory\n");
@@ -916,38 +1003,87 @@ int main(int argc, char *argv[]) {
   start_tm.tv_sec = 0; /* just in case start set condition not met */
   start_tm.tv_usec = 0;
 
-  if (verbose && (dd_count < 0))
-    pr2serr("About to issue %" PRId64 " zero block SCSI READs\n", 0 - dd_count);
+  if (verbose && (total_blocks_to_read < 0))
+    pr2serr("About to issue %" PRId64
+      " zero block SCSI READs\n", 0 - total_blocks_to_read);
 
   /* main loop */
-  for (iters = 0; dd_count != 0; ++iters) {
-    if ((do_time > 0) && (iters == (do_time - 1)))
+  for (iters = 0; total_blocks_to_read != 0; ++iters) {
+    // do_time的含义就是从第几个IO request开始计时
+    // 如果time=1，那么就是从第一个IO开始计时
+    // 之所以这样设计是有的设备是有预热时间
+    if ((do_time > 0) && (iters == (do_time - 1))) {
       gettimeofday(&start_tm, NULL);
-    if (dd_count < 0)
+    }
+
+    // 这里是设置每次要读的block的数目
+    // 如果total_blocks_to_read是一个负数
+    // 那么这里要读的blocks = 0
+    if (total_blocks_to_read < 0) {
       blocks = 0;
-    else
-      blocks = (dd_count > blocks_per) ? blocks_per : dd_count;
+    } else {
+      blocks = (total_blocks_to_read > blocks_per) ?
+        blocks_per : total_blocks_to_read;
+    }
+
+    assert(FT_SG & in_type);
+
     if (FT_SG & in_type) {
       dio_tmp = do_dio;
-      res = sg_bread(infd, wrkPos, blocks, skip, bs, scsi_cdbsz, fua, dpo,
-                     &dio_tmp, do_mmap, no_dxfer);
-      if (1 == res) { /* ENOMEM, find what's available+try that */
+
+      res = sg_bread(infd,        // 文件句柄
+                     wrkPos,      // 内存位置
+                     blocks,      // 要读的blocks的数目
+                     skip,        // 从哪里开始读?
+                     bs,          // block的大小
+                     scsi_cdbsz,  // cmd缓冲区的大小
+                     fua,         // fua要用吗？
+                     dpo,         // device cache要不要被调度出去!
+                     &dio_tmp,    // dio_tmp这个值有可能被改变
+                     do_mmap,     // 是否使用mmap
+                     no_dxfer);   // =1, 那么就是会走到kernel buffer就结束
+
+      // 出错1
+      // ERROR: ENOMEM,
+      // find what's available+try that
+      if (1 == res) {
         if (ioctl(infd, SG_GET_RESERVED_SIZE, &buf_sz) < 0) {
           perror("RESERVED_SIZE ioctls failed");
           break;
         }
-        if (buf_sz < MIN_RESERVED_SIZE)
+
+        if (buf_sz < MIN_RESERVED_SIZE) {
           buf_sz = MIN_RESERVED_SIZE;
+        }
+
+        // 重新调整了要读的blocks数目
         blocks_per = (buf_sz + bs - 1) / bs;
         blocks = blocks_per;
+
         pr2serr("Reducing read to %d blocks per loop\n", blocks_per);
-        res = sg_bread(infd, wrkPos, blocks, skip, bs, scsi_cdbsz, fua, dpo,
-                       &dio_tmp, do_mmap, no_dxfer);
+
+        // 再次去trigger read
+        res = sg_bread(infd,
+                       wrkPos,
+                       blocks,
+                       skip,
+                       bs,
+                       scsi_cdbsz,
+                       fua,
+                       dpo,
+                       &dio_tmp,
+                       do_mmap,
+                       no_dxfer);
+
       } else if (2 == res) {
+        // 出错2
+        // ERROR: 直接要求重试
         pr2serr("Unit attention, try again (r)\n");
         res = sg_bread(infd, wrkPos, blocks, skip, bs, scsi_cdbsz, fua, dpo,
                        &dio_tmp, do_mmap, no_dxfer);
       }
+
+      // 出错3
       if (0 != res) {
         switch (res) {
         case -3:
@@ -973,46 +1109,31 @@ int main(int argc, char *argv[]) {
         }
         break;
       } else {
+
+        // 如果成功!
         in_full += blocks;
-        if (do_dio && (0 == dio_tmp))
+        if (do_dio && (0 == dio_tmp)) {
+          // 如果是DIO，然后还没有做完!
           dio_incomplete++;
+        }
       }
     } else {
-      if (iters > 0) { /* subsequent iteration reset skip position */
-        off64_t offset = skip;
-
-        offset *= bs; /* could exceed 32 bits here! */
-        if (lseek64(infd, offset, SEEK_SET) < 0) {
-          perror(ME "could not reset skip position");
-          break;
-        }
-      }
-      while (((res = read(infd, wrkPos, blocks * bs)) < 0) && (EINTR == errno))
-        ;
-      if (res < 0) {
-        snprintf(ebuff, EBUFF_SZ, ME "reading, skip=%" PRId64 " ", skip);
-        perror(ebuff);
-        break;
-      } else if (res < blocks * bs) {
-        pr2serr(ME "short read: wanted/got=%d/%d bytes, stop\n", blocks * bs,
-                res);
-        blocks = res / bs;
-        if ((res % bs) > 0) {
-          blocks++;
-          in_partial++;
-        }
-        dd_count -= blocks;
-        in_full += blocks;
-        break;
-      }
-      in_full += blocks;
+      assert(0);
+      // deleted some code.
     }
-    if (dd_count > 0)
-      dd_count -= blocks;
-    else if (dd_count < 0)
-      ++dd_count;
-  }
+
+    // 调整total_blocks_to_read
+    if (total_blocks_to_read > 0) {
+      total_blocks_to_read -= blocks;
+    } else if (total_blocks_to_read < 0) {
+      ++total_blocks_to_read;
+    }
+  } // ! main loop 读循环结束
+
   read_str = (FT_SG & in_type) ? "SCSI READ" : "read";
+
+  // 这里开始计算结束时间!
+  // 这一堆代码不用管
   if (do_time > 0) {
     gettimeofday(&end_tm, NULL);
     if (start_tm.tv_sec || start_tm.tv_usec) {
@@ -1028,7 +1149,7 @@ int main(int argc, char *argv[]) {
       a = res_tm.tv_sec;
       a += (0.000001 * res_tm.tv_usec);
       if (orig_count > 0) {
-        b = (double)bs * (orig_count - dd_count);
+        b = (double)bs * (orig_count - total_blocks_to_read);
         if (do_time > 1)
           c = b - ((double)bs * ((do_time - 1.0) * bpt));
         else
@@ -1062,16 +1183,22 @@ int main(int argc, char *argv[]) {
           pr2serr("\n");
       }
       if ((iters > 0) && (a > 0.00001))
-        pr2serr("Average number of %s commands per second was %.2f\n", read_str,
+        pr2serr("Average number of %s commands per second was %.2f\n",
+                read_str,
                 (double)iters / a);
     }
   }
 
-  if (wrkBuff)
+  // 释放内存
+  if (wrkBuff) {
     free(wrkBuff);
+  }
 
+  // 关闭文件
   close(infd);
-  if (0 != dd_count) {
+
+  // 如果还没有读完，那么就是有出错!
+  if (0 != total_blocks_to_read) {
     pr2serr("Some error occurred,");
     if (0 == ret)
       ret = SG_LIB_CAT_OTHER;
@@ -1093,7 +1220,11 @@ int main(int argc, char *argv[]) {
       close(fd);
     }
   }
-  if (sum_of_resids)
+
+  if (sum_of_resids) {
     pr2serr(">> Non-zero sum of residual counts=%d\n", sum_of_resids);
+  }
+
+  // main函数的返回值
   return (ret >= 0) ? ret : SG_LIB_CAT_OTHER;
 }
