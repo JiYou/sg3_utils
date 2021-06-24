@@ -93,6 +93,10 @@ static int64_t orig_count = 0;
 static int64_t in_full = 0;
 static int in_partial = 0;
 
+static int recovered_errs = 0;
+static int unrecovered_errs = 0;
+static int miscompare_errs = 0;
+
 static int pack_id_count = 0;
 static int verbose = 0;
 
@@ -345,7 +349,7 @@ static int sg_bread(int sg_fd,
   if (blocks > 0) {
     // dxfer_direction：用于确定数据传输的方向；常常使用以下值之一： 
     // SG_DXFER_NONE：不需要传输数据。比如 SCSI Test Unit Ready 命令。 
-    // SG_DXFER_TO_DEV：将数据传输到设备。使用 SCSI WRITE 命令。 
+    // SG_DXFER_TO_DEV: 将数据传输到设备。使用 SCSI WRITE 命令。 
     // SG_DXFER_FROM_DEV：从设备输出数据。使用 SCSI READ 命令。 
     // SG_DXFER_TO_FROM_DEV：双向传输数据。 
     // SG_DXFER_UNKNOWN：数据的传输方向未知。 
@@ -457,6 +461,291 @@ static int num_chs_in_str(const char *s, int slen, int ch) {
       ++res;
   }
   return res;
+}
+
+
+static bool do_verify = false;
+
+#define VERIFY10 0x2f
+#define VERIFY12 0xaf
+#define VERIFY16 0x8f
+
+static int
+sg_build_scsi_cdb_write(uint8_t * cdbp,
+                        int cdb_sz,
+                        unsigned int blocks,
+                        int64_t start_block,
+                        bool is_verify,
+                        bool write_true,
+                        bool fua,
+                        bool dpo,
+                        int cdl)
+{
+    int sz_ind;
+    int rd_opcode[] = {0x8, 0x28, 0xa8, 0x88};
+    int ve_opcode[] = {0xff /* no VERIFY(6) */, VERIFY10, VERIFY12, VERIFY16};
+    int wr_opcode[] = {0xa, 0x2a, 0xaa, 0x8a};
+
+    memset(cdbp, 0, cdb_sz);
+
+    if (is_verify) {
+        cdbp[1] = 0x2;  /* (BYTCHK=1) << 1 */
+    } else {
+        if (dpo) {
+            cdbp[1] |= 0x10;
+        }
+
+        if (fua) {
+            cdbp[1] |= 0x8;
+        }
+    }
+
+    switch (cdb_sz) {
+    case 6:
+        sz_ind = 0;
+        if (is_verify && write_true) {
+            pr2serr(ME "there is no VERIFY(6), choose a larger cdbsz\n");
+            return 1;
+        }
+        cdbp[0] = (uint8_t)(write_true ? wr_opcode[sz_ind] :
+                                               rd_opcode[sz_ind]);
+        sg_put_unaligned_be24(0x1fffff & start_block, cdbp + 1);
+        cdbp[4] = (256 == blocks) ? 0 : (uint8_t)blocks;
+        if (blocks > 256) {
+            pr2serr(ME "for 6 byte commands, maximum number of blocks is "
+                    "256\n");
+            return 1;
+        }
+        if ((start_block + blocks - 1) & (~0x1fffff)) {
+            pr2serr(ME "for 6 byte commands, can't address blocks beyond "
+                    "%d\n", 0x1fffff);
+            return 1;
+        }
+        if (dpo || fua) {
+            pr2serr(ME "for 6 byte commands, neither dpo nor fua bits "
+                    "supported\n");
+            return 1;
+        }
+        break;
+    case 10:
+        sz_ind = 1;
+        if (is_verify && write_true)
+            cdbp[0] = ve_opcode[sz_ind];
+        else
+            cdbp[0] = (uint8_t)(write_true ? wr_opcode[sz_ind] :
+                                             rd_opcode[sz_ind]);
+        sg_put_unaligned_be32(start_block, cdbp + 2);
+        sg_put_unaligned_be16(blocks, cdbp + 7);
+        if (blocks & (~0xffff)) {
+            pr2serr(ME "for 10 byte commands, maximum number of blocks is "
+                    "%d\n", 0xffff);
+            return 1;
+        }
+        break;
+    case 12:
+        sz_ind = 2;
+        if (is_verify && write_true)
+            cdbp[0] = ve_opcode[sz_ind];
+        else
+            cdbp[0] = (uint8_t)(write_true ? wr_opcode[sz_ind] :
+                                             rd_opcode[sz_ind]);
+        sg_put_unaligned_be32(start_block, cdbp + 2);
+        sg_put_unaligned_be32(blocks, cdbp + 6);
+        break;
+    case 16:
+        sz_ind = 3;
+        if (is_verify && write_true)
+            cdbp[0] = ve_opcode[sz_ind];
+        else
+            cdbp[0] = (uint8_t)(write_true ? wr_opcode[sz_ind] :
+                                             rd_opcode[sz_ind]);
+        if ((! is_verify) && (cdl > 0)) {
+            if (cdl & 0x4)
+                cdbp[1] |= 0x1;
+            if (cdl & 0x3)
+                cdbp[14] |= ((cdl & 0x3) << 6);
+        }
+        sg_put_unaligned_be64(start_block, cdbp + 2);
+        sg_put_unaligned_be32(blocks, cdbp + 10);
+        break;
+    default:
+        pr2serr(ME "expected cdb size of 6, 10, 12, or 16 but got %d\n",
+                cdb_sz);
+        return 1;
+    }
+    return 0;
+}
+
+/**
+ * coe:
+ * 0: exit on error (def)
+ * 1: continue on sg error (zero fill)
+ * 2: also try read_long on unrecovered reads,
+ * 3: and set the CORRCT bit on the read long
+ **/
+static int coe = 0;
+
+/* failed but coe set */
+#define SG_DD_BYPASS 999
+
+/**
+ *
+ * 函数功能：
+ *
+ *  调用SCSI命令写一个设备!
+ *  Does a SCSI WRITE or VERIFY (if do_verify set) on OFILE.
+ *
+ * 输入参数：
+ *
+ *  - sg_fd:      需要写的sg设备
+ *  - buff:       写的内容所在缓冲区
+ *  - blocks:     要写的blocks的数目
+ *  - to_block:   写到磁盘上的位置, 这个是以block为单位
+ *  - bs:         block size, 单个 block的大小，必须是物理block的整数倍
+ *  - ofp:        写的时候的一些flag
+ *  - diop:       是direct io吗？
+ * 
+ * 返回值：
+ *
+ * 0:                           successful
+ * SG_LIB_SYNTAX_ERROR:         unable to build cdb,
+ * SG_LIB_CAT_NOT_READY:
+ * SG_LIB_CAT_UNIT_ATTENTION:
+ * SG_LIB_CAT_MEDIUM_HARD:
+ * SG_LIB_CAT_ABORTED_COMMAND:
+ * -2:                          recoverable (ENOMEM),
+ * -1:                          unrecoverable error + others
+ * SG_DD_BYPASS:                failed but coe set.
+ *
+ **/
+static int
+sg_write(int sg_fd,
+         uint8_t * buff,
+         int blocks,
+         int64_t to_block,
+         int bs,
+         int cdbsz,
+         bool fua,
+         bool dpo,
+         bool *diop,
+         bool do_mmap,
+         bool no_dxfer)
+{
+    bool info_valid;
+    int res;
+    uint64_t io_addr = 0;
+    const char * op_str = do_verify ? "verifying" : "writing";
+    uint8_t wrCmd[MAX_SCSI_CDBSZ];
+    uint8_t senseBuff[SENSE_BUFF_LEN];
+    struct sg_io_hdr io_hdr;
+
+    if (sg_build_scsi_cdb_write(wrCmd,
+                                cdbsz,
+                                blocks,
+                                to_block,
+                                do_verify,
+                                true,
+                                fua,
+                                dpo,
+                                0/*cdl*/)) {
+        pr2serr(ME "bad wr cdb build, to_block=%" PRId64 ", blocks=%d\n",
+                to_block, blocks);
+        return SG_LIB_SYNTAX_ERROR;
+    }
+
+    memset(&io_hdr, 0, sizeof(struct sg_io_hdr));
+
+    io_hdr.interface_id = 'S';
+    io_hdr.cmd_len = cdbsz;
+    io_hdr.cmdp = wrCmd;
+    io_hdr.dxfer_direction = SG_DXFER_TO_DEV;
+    io_hdr.dxfer_len = bs * blocks;
+    io_hdr.dxferp = buff;
+    io_hdr.mx_sb_len = SENSE_BUFF_LEN;
+    io_hdr.sbp = senseBuff;
+    io_hdr.timeout = DEF_TIMEOUT;
+    io_hdr.pack_id = pack_id_count++;
+
+    if (diop && *diop) {
+        io_hdr.flags |= SG_FLAG_DIRECT_IO;
+    }
+
+    if (verbose > 2) {
+        sg_print_command_len(wrCmd, cdbsz);
+    }
+
+    while (((res = ioctl(sg_fd, SG_IO, &io_hdr)) < 0) &&
+           ((EINTR == errno) || (EAGAIN == errno) || (EBUSY == errno)))
+        ;
+    if (res < 0) {
+        if (ENOMEM == errno)
+            return -2;
+        if (do_verify)
+            perror("verifying (SG_IO) on sg device, error");
+        else
+            perror("writing (SG_IO) on sg device, error");
+        return -1;
+    }
+
+    if (verbose > 2)
+        pr2serr("      duration=%u ms\n", io_hdr.duration);
+    res = sg_err_category3(&io_hdr);
+    switch (res) {
+    case SG_LIB_CAT_CLEAN:
+    case SG_LIB_CAT_CONDITION_MET:
+        break;
+    case SG_LIB_CAT_RECOVERED:
+        ++recovered_errs;
+        info_valid = sg_get_sense_info_fld(io_hdr.sbp, io_hdr.sb_len_wr,
+                                           &io_addr);
+        if (info_valid) {
+            pr2serr("    lba of last recovered error in this WRITE=0x%" PRIx64
+                    "\n", io_addr);
+            if (verbose > 1)
+                sg_chk_n_print3(op_str, &io_hdr, true);
+        } else {
+            pr2serr("Recovered error: [no info] %s to block=0x%" PRIx64
+                    ", num=%d\n", op_str, to_block, blocks);
+            sg_chk_n_print3(op_str, &io_hdr, verbose > 1);
+        }
+        break;
+    case SG_LIB_CAT_ABORTED_COMMAND:
+    case SG_LIB_CAT_UNIT_ATTENTION:
+        sg_chk_n_print3(op_str, &io_hdr, verbose > 1);
+        return res;
+    case SG_LIB_CAT_MISCOMPARE: /* must be VERIFY cpommand */
+        ++miscompare_errs;
+        if (coe) {
+            if (verbose > 1)
+                pr2serr(">> bypass due to miscompare: out blk=%" PRId64
+                        " for %d blocks\n", to_block, blocks);
+            return SG_DD_BYPASS; /* fudge success */
+        } else {
+            pr2serr("VERIFY reports miscompare\n");
+            return res;
+        }
+    case SG_LIB_CAT_NOT_READY:
+        ++unrecovered_errs;
+        pr2serr("device not ready (w)\n");
+        return res;
+    case SG_LIB_CAT_MEDIUM_HARD:
+    default:
+        sg_chk_n_print3(op_str, &io_hdr, verbose > 1);
+        if ((SG_LIB_CAT_ILLEGAL_REQ == res) && verbose)
+            sg_print_command_len(wrCmd, cdbsz);
+        ++unrecovered_errs;
+        if (coe) {
+            if (verbose > 1)
+                pr2serr(">> ignored errors for out blk=%" PRId64 " for %d "
+                        "bytes\n", to_block, bs * blocks);
+            return SG_DD_BYPASS; /* fudge success */
+        } else
+            return res;
+    }
+    if (diop && *diop &&
+        ((io_hdr.info & SG_INFO_DIRECT_IO_MASK) != SG_INFO_DIRECT_IO))
+        *diop = false;      /* flag that dio not done (completely) */
+    return 0;
 }
 
 #define STR_SZ 1024

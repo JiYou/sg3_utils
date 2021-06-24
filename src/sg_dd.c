@@ -63,6 +63,7 @@
 #ifdef HAVE_GETRANDOM
 #include <sys/random.h>         /* for getrandom() system call */
 #endif
+
 #include "sg_lib.h"
 #include "sg_cmds_basic.h"
 #include "sg_cmds_extra.h"
@@ -72,9 +73,7 @@
 
 static const char * version_str = "6.25 20210326";
 
-
 #define ME "sg_dd: "
-
 
 #define STR_SZ 1024
 #define INOUTF_SZ 512
@@ -336,11 +335,13 @@ find_nvme_major(void)
             pr2serr("fopen %s failed: %s\n", proc_devices, strerror(errno));
         return;
     }
+
     while ((cp = fgets(b, sizeof(b), fp))) {
         if ((1 == sscanf(b, "%126s", a)) &&
             (0 == memcmp(a, "Character", 9)))
             break;
     }
+
     while (cp && (cp = fgets(b, sizeof(b), fp))) {
         if (2 == sscanf(b, "%d %126s", &n, a)) {
             if (0 == strcmp("nvme", a)) {
@@ -350,12 +351,14 @@ find_nvme_major(void)
         } else
             break;
     }
+
     if (verbose > 5) {
         if (cp)
             pr2serr("found nvme_major=%d\n", bsg_major);
         else
             pr2serr("found no nvme char device in %s\n", proc_devices);
     }
+    
     fclose(fp);
 }
 
@@ -1784,7 +1787,16 @@ main(int argc, char * argv[])
     bool sparse_skip = false;
     bool verbose_given = false;
     bool version_given = false;
-    int res, k, n, t, buf_sz, blocks_per, infd, outfd, out2fd, keylen;
+    int res;
+    int k;
+    int n;
+    int t;
+    int buf_sz;
+    int blocks_per;
+    int infd;
+    int outfd;
+    int out2fd;
+    int keylen;
     int retries_tmp, blks_read, bytes_read, bytes_of2, bytes_of;
     int in_sect_sz, out_sect_sz;
     int blocks = 0;
