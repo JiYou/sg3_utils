@@ -165,6 +165,12 @@ sg_build_scsi_cdb(uint8_t *cdbp,
 
     cdbp[1] = 0x2;
 
+    is_verify = false;
+        if (dpo)
+      cdbp[1] |= 0x10;
+    if (fua)
+      cdbp[1] |= 0x8;
+
     sz_ind = 1;
     if (is_verify && write_true) {
       cdbp[0] = ve_opcode[sz_ind];
@@ -258,6 +264,13 @@ sg_write(int sg_fd,
                           fua,
                           dpo));
 
+
+  printf("cmd_len = %d\n", cdbsz);
+  for (int i = 0; i < cdbsz; i++) {
+      printf("%d ", wrCmd[i]);
+  }
+  printf("\n");
+
     memset(&io_hdr, 0, sizeof(struct sg_io_hdr));
 
     io_hdr.interface_id = 'S';
@@ -311,7 +324,7 @@ int main(void) {
   assert(write_buf);
   // 初始化这个内存块
   for (int i = 0; i < (MiB<<2); i++) {
-    write_buf[i] = 'A';
+    write_buf[i] = 'D';
   }
 
   // 这里写一下要写多少次

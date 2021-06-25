@@ -584,6 +584,9 @@ static int sg_build_scsi_cdb(uint8_t *cdbp, int cdb_sz, unsigned int blocks,
   int wr_opcode[] = {0xa, 0x2a, 0xaa, 0x8a};
 
   memset(cdbp, 0, cdb_sz);
+
+  printf("is_verify = %d\n", is_verify);
+
   if (is_verify)
     cdbp[1] = 0x2; /* (BYTCHK=1) << 1 */
   else {
@@ -1104,8 +1107,11 @@ static int sg_write(int sg_fd, uint8_t *buff, int blocks, int64_t to_block,
   if (diop && *diop)
     io_hdr.flags |= SG_FLAG_DIRECT_IO;
 
-  if (verbose > 2)
-    sg_print_command_len(wrCmd, ofp->cdbsz);
+  printf("cmd_len = %d\n", ofp->cdbsz);
+  for (int i = 0; i < ofp->cdbsz; i++) {
+      printf("%d ", wrCmd[i]);
+  }
+  printf("\n");
 
   while (((res = ioctl(sg_fd, SG_IO, &io_hdr)) < 0) &&
          ((EINTR == errno) || (EAGAIN == errno) || (EBUSY == errno)))
@@ -2297,8 +2303,13 @@ int main(int argc, char *argv[]) {
   assert(write_buf);
   // 初始化这个内存块
   for (int i = 0; i < ((1024 * 1024)<<2); i++) {
-    write_buf[i] = 'C';
+    write_buf[i] = 'D';
   }
+
+
+  int fd = -1;
+  fd = open("/dev/sdb", O_RDWR | O_DIRECT);
+  assert(-1 != fd);
 
   int pos = -1;
 
@@ -2323,8 +2334,15 @@ int main(int argc, char *argv[]) {
     pos++;
 
     printf("dio_tmp = %d\n", dio_tmp);
+    printf("blk_sze = %d\n", blk_sz);
 
-    ret = sg_write(outfd, write_buf, blocks, pos, blk_sz, &oflag, &dio_tmp);
+    ret = sg_write(fd,
+                   write_buf,
+                   blocks,
+                   pos,
+                   blk_sz,
+                   &oflag,
+                   &dio_tmp);
     printf("Writer over\n");
     assert(0 == ret);
 
@@ -2342,6 +2360,8 @@ int main(int argc, char *argv[]) {
       }
     }
   } /* end of main loop that does the copy ... */
+
+  close(fd);
 
 bypass_copy:
   if (do_time)
