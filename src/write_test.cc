@@ -93,7 +93,7 @@ static int get_file_type(const char *filename) {
   if (stat(filename, &st) < 0) {
     return FT_ERROR;
   }
-  
+
   if (S_ISCHR(st.st_mode)) {
     if (RAW_MAJOR == major(st.st_rdev)) {
       return FT_RAW;
@@ -231,7 +231,7 @@ int pack_id_count;
  *    fua:        fua要用吗？
  *    dpo:        device cache要不要被调度出去!
  *    &diop:      diop值有可能被改变
- * 
+ *
  * 返回值：
  *
  * 0:                           successful
