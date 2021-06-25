@@ -1,5 +1,8 @@
 #!/bin/bash
+set -e
 g++ -std=c++11 write_test.cc -o /tmp/write;
 /tmp/write
 dd if=/dev/sdb bs=4096 count=10 of=/tmp/a
-diff /tmp/a /tmp/res
+dd if=/tmp/res bs=4096 count=10 of=/tmp/b
+
+diff /tmp/a /tmp/b

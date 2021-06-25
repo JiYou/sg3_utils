@@ -40,6 +40,14 @@
 #define RAW_MAJOR 255 /*unlikely value */
 #endif
 
+enum
+{
+  kReadOp = 1,
+  kWriteOp = 2,
+  kBlockSize = 512,
+};
+
+
 /**
  * Utilities can use these exit status values for syntax errors and
  * file (device node) problems (e.g. not found or permissions).
@@ -130,12 +138,10 @@ static inline void sg_put_unaligned_be16(uint16_t val, void *p) {
         memcpy(p, &u, 2);
 }
 
-
 static inline void sg_put_unaligned_be32(uint32_t val, void *p) {
         uint32_t u = bswap_32(val);
         memcpy(p, &u, 4);
 }
-
 
 // 开始构建SCSI命令!
 static int
@@ -263,14 +269,6 @@ sg_write(int sg_fd,
                           true/*write_true*/,
                           fua,
                           dpo));
-
-
-  printf("cmd_len = %d\n", cdbsz);
-  for (int i = 0; i < cdbsz; i++) {
-      printf("%d ", wrCmd[i]);
-  }
-  printf("\n");
-
     memset(&io_hdr, 0, sizeof(struct sg_io_hdr));
 
     io_hdr.interface_id = 'S';
@@ -295,7 +293,6 @@ sg_write(int sg_fd,
 
     assert(res == 0);
 
-    /* flag that dio not done (completely) */
 //    if (diop && *diop &&
 //        ((io_hdr.info & SG_INFO_DIRECT_IO_MASK)
 //          != SG_INFO_DIRECT_IO)) {
@@ -305,6 +302,97 @@ sg_write(int sg_fd,
 
     return 0;
 }
+
+// index stands for microsecond
+static uint64_t time_stat_microsecond[1000000];
+static uint64_t max_io_time_nanosecond = 0;
+static uint64_t min_io_nanosecond = INT64_MAX;
+
+// 这里写一下要写多少次
+// 为了简单起见，这里我们只写10次
+// 也就是发送10次指令
+constexpr int64_t total_write_times = 10000;
+
+/**
+ * Function:
+ *  Used to print out the results of disk performance
+ *
+ * Arguments:
+ *  - IOPS: total iops during the time.
+ *  - total_time (nanoseconds): total running time
+ *  - unit_size (bytes): every read/write_size
+ *
+ * output: Just like fio
+ *    |  1.00th=[ 1020],  5.00th=[ 1237], 10.00th=[ 1401], 20.00th=[ 7373],
+ *    | 30.00th=[ 7701], 40.00th=[ 7832], 50.00th=[ 7898], 60.00th=[ 7963],
+ *    | 70.00th=[ 8094], 80.00th=[ 8160], 90.00th=[ 8291], 95.00th=[ 8356],
+ *    | 99.00th=[ 8455], 99.50th=[ 8586], 99.90th=[ 8848], 99.95th=[ 8979],
+ *    | 99.99th=[ 9110]
+ */
+static void
+output_result(int op_type,
+              uint64_t iops,
+              uint64_t total_time,
+              uint64_t uint_size)
+{
+  printf("min_time = %.3f (ms)\n", (double)min_io_nanosecond / 1000.0 / 1000.0);
+  printf("max_time = %.3f (ms)\n",
+         (double)max_io_time_nanosecond / 1000.0 / 1000.0);
+  printf("total_iops = %lu\n", iops);
+  printf("total_time = %.3f (ms)\n", double(total_time) / 1000.0 / 1000.0);
+
+  static double per[] = { 1,  5,  10, 20, 30,   40,   50,    60,   70,
+                          80, 90, 95, 99, 99.5, 99.9, 99.95, 99.99 };
+
+  double per_ret_ms[sizeof(per) / sizeof(*per)];
+
+  if (op_type == kReadOp) {
+    std::cout << "Op = "
+              << "Read" << std::endl;
+  } else {
+    std::cout << "Op = "
+              << "Write" << std::endl;
+  }
+
+  // iops per second
+  std::cout << "IOPS = " << (iops * 1000 * 1000 * 1000) / total_time
+            << " iops/s" << std::endl;
+
+  // BW (bytes/second)
+  std::cout << "BW = "
+            << (double)((double)iops * (double)uint_size * 1000 * 1000 * 1000) /
+                 (double)total_time / 1024 / 1024
+            << " MB/s" << std::endl;
+
+  double cnt = 0;
+  double total_item = iops;
+
+  int per_idx = 0;
+
+  // compute ops percentile
+  for (uint64_t i = min_io_nanosecond / 1000;
+       i <= max_io_time_nanosecond / 1000;
+       i++) {
+    // want percentile
+    if (cnt / total_item * 100.0 <= per[per_idx]) {
+      per_ret_ms[per_idx] = (double)i / 1000.0;
+
+      // 防止空洞的情况发生
+      if (per_idx + 1 < sizeof(per_ret_ms) / sizeof(*per_ret_ms)) {
+        per_ret_ms[per_idx + 1] = (double) i / 1000.0;
+      }
+
+    } else {
+      per_idx++;
+    }
+    cnt += time_stat_microsecond[i];
+  }
+
+  for (int i = 0; i < sizeof(per) / sizeof(*per); i++) {
+    printf("percentile %.2lf %%= %.3lf (ms)\n", per[i], per_ret_ms[i]);
+  }
+}
+
 
 int main(void) {
   auto ret = get_file_type(file_name);
@@ -327,30 +415,27 @@ int main(void) {
     write_buf[i] = random() % 26 + 'a';
   }
 
-  // 这里写一下要写多少次
-  // 为了简单起见，这里我们只写10次
-  // 也就是发送10次指令
-  constexpr int64_t total_write_times = 10;
-
   // 这里我们要开始计时
   auto start_total_time = std::chrono::system_clock::now();
 
   auto get_diff_ns = [](const decltype(start_total_time)& start,
-                        const decltype(start_total_time)& end) {
+                        const decltype(start_total_time) end) {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(end - start);
     // 1,000 nanoseconds – one microsecond
     // 1,000 microseconds - one ms
   };
 
-  // 记录下每个请求所用的时间
-  std::vector<int> time_cost;
-
   int file_fd = open("/tmp/res", O_RDWR | O_CREAT | O_TRUNC);
   assert(file_fd != -1);
+
+  uint64_t time_cost[total_write_times];
+  uint64_t time_cost_nanosecond = 0;
 
   for (int64_t i = 0; i < total_write_times; i++) {
     bool direct_io = false;
     // 到这里我们开始写
+
+    auto start = std::chrono::system_clock::now();
 
     auto ret = sg_write(fd,
                         write_buf,
@@ -361,6 +446,17 @@ int main(void) {
                         false/*FUA*/,
                         false/*dpo*/,
                         &direct_io);
+
+    auto end = std::chrono::system_clock::now();;
+
+    uint64_t current_io_nanosecond = get_diff_ns(start, end).count();
+    max_io_time_nanosecond = std::max(max_io_time_nanosecond, current_io_nanosecond);
+    min_io_nanosecond = std::min(min_io_nanosecond, current_io_nanosecond);
+
+    time_cost[i] = current_io_nanosecond;
+    time_stat_microsecond[current_io_nanosecond / 1000]++;
+    time_cost_nanosecond += current_io_nanosecond;
+
     assert(ret == 0);
     // 写完为了避免threshold.这里加个延时
     Sleep(10);
@@ -375,6 +471,15 @@ int main(void) {
   free(write_buf);
   close(fd);
   close(file_fd);
+
+  for (int i = 0; i < total_write_times; i++) {
+    std::cout << time_cost[i] << std::endl;
+  }
+
+  output_result(kWriteOp,
+                total_write_times,
+                time_cost_nanosecond,
+                k4KiB);
 
   return 0;
 }
