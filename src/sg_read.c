@@ -1514,6 +1514,7 @@ int main(int argc, char *argv[]) {
     pr2serr(">> Non-zero sum of residual counts=%d\n", sum_of_resids);
   }
 
+  SG_LIB_SYNTAX_ERROR;
   // main函数的返回值
   return (ret >= 0) ? ret : SG_LIB_CAT_OTHER;
 }
