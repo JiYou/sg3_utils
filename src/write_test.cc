@@ -284,9 +284,9 @@ sg_write(int sg_fd,
     io_hdr.timeout = DEF_TIMEOUT;
     io_hdr.pack_id = pack_id_count++;
 
-//    if (diop && *diop) {
-//        io_hdr.flags |= SG_FLAG_DIRECT_IO;
-//    }
+    if (diop && *diop) {
+        io_hdr.flags |= SG_FLAG_DIRECT_IO;
+    }
 
     while (((res = ioctl(sg_fd, SG_IO, &io_hdr)) < 0) &&
            ((EINTR == errno) || (EAGAIN == errno) || (EBUSY == errno))) {
@@ -324,7 +324,7 @@ int main(void) {
   assert(write_buf);
   // 初始化这个内存块
   for (int i = 0; i < (MiB<<2); i++) {
-    write_buf[i] = 'D';
+    write_buf[i] = random() % 26 + 'a';
   }
 
   // 这里写一下要写多少次
