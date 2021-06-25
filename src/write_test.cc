@@ -112,7 +112,7 @@ static void print_file_type(int flag) {
 
 
 // 文件操作
-static const char *file_name = "/dev/sdb";
+static const char *file_name = "/dev/sg2";
 int fd = -1;
 
 
@@ -249,17 +249,14 @@ sg_write(int sg_fd,
     uint64_t io_addr = 0;
     struct sg_io_hdr io_hdr;
 
-    if (sg_build_scsi_cdb(wrCmd,
+    assert(0 == sg_build_scsi_cdb(wrCmd,
                           cdbsz,
                           blocks,
                           to_block,
                           true/*verify*/,
                           true/*write_true*/,
                           fua,
-                          dpo)) {
-      printf("build command failed\n");
-        return SG_LIB_SYNTAX_ERROR;
-    }
+                          dpo));
 
     memset(&io_hdr, 0, sizeof(struct sg_io_hdr));
 
@@ -274,9 +271,9 @@ sg_write(int sg_fd,
     io_hdr.timeout = DEF_TIMEOUT;
     io_hdr.pack_id = pack_id_count++;
 
-    if (diop && *diop) {
-        io_hdr.flags |= SG_FLAG_DIRECT_IO;
-    }
+//    if (diop && *diop) {
+//        io_hdr.flags |= SG_FLAG_DIRECT_IO;
+//    }
 
     while (((res = ioctl(sg_fd, SG_IO, &io_hdr)) < 0) &&
            ((EINTR == errno) || (EAGAIN == errno) || (EBUSY == errno))) {
@@ -286,20 +283,21 @@ sg_write(int sg_fd,
     assert(res == 0);
 
     /* flag that dio not done (completely) */
-    if (diop && *diop &&
-        ((io_hdr.info & SG_INFO_DIRECT_IO_MASK)
-          != SG_INFO_DIRECT_IO)) {
-        *diop = false;
-    }
+//    if (diop && *diop &&
+//        ((io_hdr.info & SG_INFO_DIRECT_IO_MASK)
+//          != SG_INFO_DIRECT_IO)) {
+//      printf("write NOT over!\n");
+//      *diop = false;
+//    }
 
     return 0;
 }
 
 int main(void) {
   auto ret = get_file_type(file_name);
-  assert(FT_BLOCK & ret);
+  // assert(FT_BLOCK & ret);
 
-  auto open_file_flags = O_RDWR | O_DIRECT;
+  auto open_file_flags = O_RDWR; //  | O_DIRECT;
 
   fd = open(file_name, open_file_flags);
   assert(-1 != fd);
@@ -313,7 +311,7 @@ int main(void) {
   assert(write_buf);
   // 初始化这个内存块
   for (int i = 0; i < (MiB<<2); i++) {
-    write_buf[i] = random() % 26 + 'a';
+    write_buf[i] = 'A';
   }
 
   // 这里写一下要写多少次
@@ -334,8 +332,11 @@ int main(void) {
   // 记录下每个请求所用的时间
   std::vector<int> time_cost;
 
+  int file_fd = open("/tmp/res", O_RDWR | O_CREAT | O_TRUNC);
+  assert(file_fd != -1);
+
   for (int64_t i = 0; i < total_write_times; i++) {
-    bool direct_io = true;
+    bool direct_io = false;
     // 到这里我们开始写
 
     auto ret = sg_write(fd,
@@ -350,6 +351,8 @@ int main(void) {
     assert(ret == 0);
     // 写完为了避免threshold.这里加个延时
     Sleep(10);
+
+    assert(k4KiB == write(file_fd, write_buf, k4KiB));
   }
 
   auto end_total_time = std::chrono::system_clock::now();
@@ -358,6 +361,7 @@ int main(void) {
 
   free(write_buf);
   close(fd);
+  close(file_fd);
 
   return 0;
 }

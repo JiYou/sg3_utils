@@ -1320,10 +1320,12 @@ int main(int argc, char *argv[]) {
     if (FT_SG & in_type) {
       dio_tmp = do_dio;
 
+      memset(wrkPos, 0, bs * bpt + psz);
+
       res = sg_bread(infd,        // 文件句柄
                      wrkPos,      // 内存位置
                      blocks,      // 要读的blocks的数目
-                     skip,        // 从哪里开始读?
+                     iters,        // 从哪里开始读?
                      bs,          // block的大小
                      scsi_cdbsz,  // cmd缓冲区的大小
                      fua,         // fua要用吗？
@@ -1405,6 +1407,11 @@ int main(int argc, char *argv[]) {
           // 如果是DIO，然后还没有做完!
           dio_incomplete++;
         }
+
+        for (int j = 0; j < 100; j++) {
+          printf("%c", wrkPos[j]);
+        }
+        printf("\n");
       }
     } else {
       assert(0);
