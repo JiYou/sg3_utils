@@ -394,13 +394,12 @@ output_result(int op_type,
 }
 
 
-int main(void) {
-  auto ret = get_file_type(file_name);
-  // assert(FT_BLOCK & ret);
+int main(int argc, char **argv) {
+  auto ret = get_file_type(argv[1]);
 
-  auto open_file_flags = O_RDWR; //  | O_DIRECT;
+  auto open_file_flags = O_RDWR | O_DIRECT;
 
-  fd = open(file_name, open_file_flags);
+  fd = open(argv[1], open_file_flags);
   assert(-1 != fd);
 
   uint8_t *write_buf = nullptr;
@@ -459,7 +458,7 @@ int main(void) {
 
     assert(ret == 0);
     // 写完为了避免threshold.这里加个延时
-    Sleep(10);
+    Sleep(3);
 
     assert(k4KiB == write(file_fd, write_buf, k4KiB));
   }
@@ -472,9 +471,9 @@ int main(void) {
   close(fd);
   close(file_fd);
 
-  for (int i = 0; i < total_write_times; i++) {
-    std::cout << time_cost[i] << std::endl;
-  }
+//  for (int i = 0; i < total_write_times; i++) {
+//    std::cout << time_cost[i] << std::endl;
+//  }
 
   output_result(kWriteOp,
                 total_write_times,
