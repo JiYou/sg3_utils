@@ -1753,9 +1753,11 @@ main(int argc, char * argv[])
     const char * dev_name;
 
     op = &a_opts;
+
 #if 0
     memset(op, 0, sizeof(*op));         // C++ doesn't like this
 #endif
+
     op->direct = DEF_DIRECT;
     op->lba = DEF_LBA;
     op->hi_lba = 0;

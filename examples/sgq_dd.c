@@ -27,6 +27,102 @@
  * >= 30000 . This version uses queuing within the Linux sg driver.
  */
 
+/**
+ * root@yoj-perf-4g:/opt/sg3_utils/examples# strace ./sgq_dd if=/dev/sg0 of=/dev/sg2 bs=4096 bpt=1 count=1
+ * execve("./sgq_dd", ["./sgq_dd", "if=/dev/sg0", "of=/dev/sg2", "bs=4096", "bpt=1", "count=1"], 0x7ffed80a92a8  24 vars ) = 0
+ * brk(NULL)                               = 0x55e0ba246000
+ * access("/etc/ld.so.nohwcap", F_OK)      = -1 ENOENT (No such file or directory)
+ * access("/etc/ld.so.preload", R_OK)      = -1 ENOENT (No such file or directory)
+ * openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+ * fstat(3, {st_mode=S_IFREG|0644, st_size=31819, ...}) = 0
+ * mmap(NULL, 31819, PROT_READ, MAP_PRIVATE, 3, 0) = 0x7fb1f6277000
+ * close(3)                                = 0
+ * access("/etc/ld.so.nohwcap", F_OK)      = -1 ENOENT (No such file or directory)
+ * openat(AT_FDCWD, "/lib/x86_64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+ * read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0>\0\1\0\0\0\20\35\2\0\0\0\0\0"..., 832) = 832
+ * fstat(3, {st_mode=S_IFREG|0755, st_size=2030928, ...}) = 0
+ * mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7fb1f6275000
+ * mmap(NULL, 4131552, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_DENYWRITE, 3, 0) = 0x7fb1f5c65000
+ * mprotect(0x7fb1f5e4c000, 2097152, PROT_NONE) = 0
+ * mmap(0x7fb1f604c000, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1e7000) = 0x7fb1f604c000
+ * mmap(0x7fb1f6052000, 15072, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0x7fb1f6052000
+ * close(3)                                = 0
+ * arch_prctl(ARCH_SET_FS, 0x7fb1f6276540) = 0
+ * mprotect(0x7fb1f604c000, 16384, PROT_READ) = 0
+ * mprotect(0x55e0b86ea000, 4096, PROT_READ) = 0
+ * mprotect(0x7fb1f627f000, 4096, PROT_READ) = 0
+ * munmap(0x7fb1f6277000, 31819)           = 0
+ * rt_sigaction(SIGINT, NULL, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+ * rt_sigaction(SIGINT, {sa_handler=0x55e0b84d2630, sa_mask=[], sa_flags=SA_RESTORER, sa_restorer=0x7fb1f5ca4040}, NULL, 8) = 0
+ * rt_sigaction(SIGQUIT, NULL, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+ * rt_sigaction(SIGQUIT, {sa_handler=0x55e0b84d2630, sa_mask=[], sa_flags=SA_RESTORER, sa_restorer=0x7fb1f5ca4040}, NULL, 8) = 0
+ * rt_sigaction(SIGPIPE, NULL, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+ * rt_sigaction(SIGPIPE, {sa_handler=0x55e0b84d2630, sa_mask=[], sa_flags=SA_RESTORER, sa_restorer=0x7fb1f5ca4040}, NULL, 8) = 0
+ * rt_sigaction(SIGUSR1, NULL, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+ * rt_sigaction(SIGUSR1, {sa_handler=0x55e0b84d25b0, sa_mask=[], sa_flags=SA_RESTORER, sa_restorer=0x7fb1f5ca4040}, NULL, 8) = 0
+ * stat("/dev/sg0", {st_mode=S_IFCHR|0660, st_rdev=makedev(21, 0), ...}) = 0
+ * openat(AT_FDCWD, "/dev/sg0", O_RDWR)    = 3
+ * stat("/dev/sg2", {st_mode=S_IFCHR|0660, st_rdev=makedev(21, 2), ...}) = 0
+ * openat(AT_FDCWD, "/dev/sg2", O_RDWR)    = 4
+ * brk(NULL)                               = 0x55e0ba246000
+ * brk(0x55e0ba267000)                     = 0x55e0ba267000
+ * ioctl(3, SG_GET_VERSION_NUM, [30536])   = 0
+ * ioctl(3, SG_SET_RESERVED_SIZE, [4096])  = 0
+ * ioctl(3, SG_GET_SCSI_ID, {host_no=0, channel=0, scsi_id=0, lun=0, scsi_type=0, h_cmd_per_lun=2048, d_queue_depth=2048}) = 0
+ * ioctl(4, SG_GET_VERSION_NUM, [30536])   = 0
+ * ioctl(4, SG_SET_RESERVED_SIZE, [4096])  = 0
+ * ioctl(4, SG_GET_SCSI_ID, {host_no=2, channel=0, scsi_id=0, lun=0, scsi_type=0, h_cmd_per_lun=2048, d_queue_depth=2048}) = 0
+ * openat(AT_FDCWD, "/dev/sg0", O_RDWR)    = 5
+ * ioctl(5, SG_GET_VERSION_NUM, [30536])   = 0
+ * ioctl(5, SG_SET_RESERVED_SIZE, [4096])  = 0
+ * ioctl(5, SG_GET_SCSI_ID, {host_no=0, channel=0, scsi_id=0, lun=0, scsi_type=0, h_cmd_per_lun=2048, d_queue_depth=2048}) = 0
+ * openat(AT_FDCWD, "/dev/sg2", O_RDWR)    = 6
+ * ioctl(6, SG_GET_VERSION_NUM, [30536])   = 0
+ * ioctl(6, SG_SET_RESERVED_SIZE, [4096])  = 0
+ * ioctl(6, SG_GET_SCSI_ID, {host_no=2, channel=0, scsi_id=0, lun=0, scsi_type=0, h_cmd_per_lun=2048, d_queue_depth=2048}) = 0
+ * openat(AT_FDCWD, "/dev/sg0", O_RDWR)    = 7
+ * ioctl(7, SG_GET_VERSION_NUM, [30536])   = 0
+ * ioctl(7, SG_SET_RESERVED_SIZE, [4096])  = 0
+ * ioctl(7, SG_GET_SCSI_ID, {host_no=0, channel=0, scsi_id=0, lun=0, scsi_type=0, h_cmd_per_lun=2048, d_queue_depth=2048}) = 0
+ * openat(AT_FDCWD, "/dev/sg2", O_RDWR)    = 8
+ * ioctl(8, SG_GET_VERSION_NUM, [30536])   = 0
+ * ioctl(8, SG_SET_RESERVED_SIZE, [4096])  = 0
+ * ioctl(8, SG_GET_SCSI_ID, {host_no=2, channel=0, scsi_id=0, lun=0, scsi_type=0, h_cmd_per_lun=2048, d_queue_depth=2048}) = 0
+ * openat(AT_FDCWD, "/dev/sg0", O_RDWR)    = 9
+ * ioctl(9, SG_GET_VERSION_NUM, [30536])   = 0
+ * ioctl(9, SG_SET_RESERVED_SIZE, [4096])  = 0
+ * ioctl(9, SG_GET_SCSI_ID, {host_no=0, channel=0, scsi_id=0, lun=0, scsi_type=0, h_cmd_per_lun=2048, d_queue_depth=2048}) = 0
+ * openat(AT_FDCWD, "/dev/sg2", O_RDWR)    = 10
+ * ioctl(10, SG_GET_VERSION_NUM, [30536])  = 0
+ * ioctl(10, SG_SET_RESERVED_SIZE, [4096]) = 0
+ * ioctl(10, SG_GET_SCSI_ID, {host_no=2, channel=0, scsi_id=0, lun=0, scsi_type=0, h_cmd_per_lun=2048, d_queue_depth=2048}) = 0
+ * write(3, "S\0\0\0\375\377\377\377\n \0\0\0\20\0\0\0p$\272\340U\0\0\340b$\272\340U\0\0"..., 88) = 88
+ * poll([{fd=4, events=POLLIN}, {fd=6, events=POLLIN}, {fd=8, events=POLLIN}, {fd=10, events=POLLIN}], 4, 0) = 0 (Timeout)
+ * poll([{fd=3, events=POLLIN}, {fd=5, events=POLLIN}, {fd=7, events=POLLIN}, {fd=9, events=POLLIN}], 4, 0) = 1 ([{fd=3, revents=POLLIN}])
+ * read(3, "S\0\0\0\375\377\377\377\n \0\0\0\20\0\0\0p$\272\340U\0\0\340b$\272\340U\0\0"..., 88) = 88
+ * write(4, "S\0\0\0\376\377\377\377\n \0\0\0\20\0\0\0p$\272\340U\0\0\340b$\272\340U\0\0"..., 88) = 88
+ * poll([{fd=4, events=POLLIN}, {fd=6, events=POLLIN}, {fd=8, events=POLLIN}, {fd=10, events=POLLIN}], 4, 0) = 0 (Timeout)
+ * poll([{fd=3, events=POLLIN}, {fd=5, events=POLLIN}, {fd=7, events=POLLIN}, {fd=9, events=POLLIN}], 4, 0) = 0 (Timeout)
+ * poll([{fd=4, events=POLLIN}, {fd=6, events=POLLIN}, {fd=8, events=POLLIN}, {fd=10, events=POLLIN}], 4, 0) = 0 (Timeout)
+ * poll([{fd=3, events=POLLIN}, {fd=5, events=POLLIN}, {fd=7, events=POLLIN}, {fd=9, events=POLLIN}], 4, 0) = 0 (Timeout)
+ * poll([{fd=4, events=POLLIN}, {fd=6, events=POLLIN}, {fd=8, events=POLLIN}, {fd=10, events=POLLIN}], 4, 0) = 0 (Timeout)
+ * poll([{fd=3, events=POLLIN}, {fd=5, events=POLLIN}, {fd=7, events=POLLIN}, {fd=9, events=POLLIN}], 4, 0) = 0 (Timeout)
+ * poll([{fd=4, events=POLLIN}, {fd=6, events=POLLIN}, {fd=8, events=POLLIN}, {fd=10, events=POLLIN}], 4, 0) = 0 (Timeout)
+ * poll([{fd=3, events=POLLIN}, {fd=5, events=POLLIN}, {fd=7, events=POLLIN}, {fd=9, events=POLLIN}], 4, 0) = 0 (Timeout)
+ * poll([{fd=4, events=POLLIN}, {fd=6, events=POLLIN}, {fd=8, events=POLLIN}, {fd=10, events=POLLIN}], 4, 0) = 1 ([{fd=4, revents=POLLIN}])
+ * read(4, "S\0\0\0\376\377\377\377\n \0\0\0\20\0\0\0p$\272\340U\0\0\340b$\272\340U\0\0"..., 88) = 88
+ * close(3)                                = 0
+ * close(4)                                = 0
+ * write(2, "1+0 records in\n", 151+0 records in
+ * )        = 15
+ * write(2, "1+0 records out\n", 161+0 records out
+ * )       = 16
+ * write(2, ">> Non-zero sum of residual coun"..., 40>> Non-zero sum of residual counts=3584
+ * ) = 40
+ * exit_group(0)                           = ?
+ * +++ exited with 0 +++
+ ***/
+
 #define _XOPEN_SOURCE 500
 
 #include <unistd.h>
@@ -323,6 +419,7 @@ read_capacity(int sg_fd, int * num_sect, int * sect_sz)
         perror("read_capacity (SG_IO) error");
         return -1;
     }
+
     res = sg_err_category3(&io_hdr);
     if (SG_LIB_CAT_UNIT_ATTENTION == res)
         return 2; /* probably have another go ... */
@@ -330,12 +427,15 @@ read_capacity(int sg_fd, int * num_sect, int * sect_sz)
         sg_chk_n_print3("read capacity", &io_hdr, 1);
         return -1;
     }
+
     *num_sect = 1 + sg_get_unaligned_be32(rcBuff + 0);
     *sect_sz = sg_get_unaligned_be32(rcBuff + 4);
+
 #ifdef DEBUG
     fprintf(stderr, "number of sectors=%d, sector size=%d\n",
             *num_sect, *sect_sz);
 #endif
+
     return 0;
 }
 
@@ -1067,17 +1167,21 @@ main(int argc, char * argv[])
                 /* do_poll(&rcoll, 0, NULL); */
                 break;
             }
-            if (rcoll.debug > 8)
+
+            if (rcoll.debug > 8) {
                 fprintf(stderr, "    sgq_dd: non-sleeping QS_IDLE state, "
                                 "req_index=%d\n", req_index);
-            if (first_xfer >= 2)
+            }
+
+            if (first_xfer >= 2) {
                 first_xfer = 0;
-            else if (1 == first_xfer)
+            } else if (1 == first_xfer) {
                 ++first_xfer;
-            if (stop_after_write) {
+            } if (stop_after_write) {
                 terminate = 1;
                 break;
             }
+
             blocks = (rcoll.in_count > rcoll.bpt) ? rcoll.bpt : rcoll.in_count;
             rep->wr = 0;
             rep->blk = rcoll.in_blk;
@@ -1088,12 +1192,12 @@ main(int argc, char * argv[])
             if (FT_SG == rcoll.in_type) {
                 res = sg_start_io(rep);
                 if (0 != res) {
-                    if (1 == res)
+                    if (1 == res) {
                         fprintf(stderr, "Out of memory starting sg io\n");
+                    }
                     terminate = 1;
                 }
-            }
-            else {
+            } else {
                 res = normal_in_operation(&rcoll, rep, blocks);
                 if (res < 0)
                     terminate = 1;

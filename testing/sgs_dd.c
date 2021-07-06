@@ -261,6 +261,8 @@ get_mmap_addr(int fd, int num, uint8_t ** mmpp)
 {
     uint8_t * mmp;
 
+    printf("JIYOU %s()\n", __func__);
+
     if (! mmpp)
         return -EINVAL;
     mmp = (uint8_t *)mmap(NULL, num, PROT_READ | PROT_WRITE,
@@ -281,6 +283,9 @@ static int
 read_capacity(int sg_fd, int * num_sect, int * sect_sz)
 {
     int res;
+
+    printf("JIYOU %s()\n", __func__);
+
     uint8_t rcCmdBlk [10] = {0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     uint8_t rcBuff[64];
     uint8_t sense_b[64];
@@ -325,6 +330,8 @@ sg_start_io(Rq_coll * clp, Rq_elem * rep)
     struct flags_t * flagp = is_wr ? rep->oflagp : rep->iflagp;
     sg_io_hdr_t * hp = &rep->io_hdr;
     struct sg_io_v4 * h4p = &rep->io_v4;
+
+    printf("JIYOU %s()\n", __func__);
 
     if (clp->both_mmap && is_wr)
         memcpy(clp->out_mmapp, clp->in_mmapp, num_bytes);
@@ -466,6 +473,8 @@ sg_finish_io(Rq_coll * clp, bool wr, Rq_elem ** repp)
     struct sg_io_v4 io_v4;
     struct sg_io_v4 * h4p;
     Rq_elem * rep;
+
+    printf("JIYOU %s()\n", __func__);
 
     if (is_v4)
         goto do_v4;
@@ -650,6 +659,8 @@ sz_reserve(Rq_coll * clp, bool is_in)
     struct sg_extended_info sei;
     struct sg_extended_info * seip;
 
+    printf("JIYOU %s()\n", __func__);
+
     seip = &sei;
     res = ioctl(fd, SG_GET_VERSION_NUM, &t);
     if ((res < 0) || (t < 30000)) {
@@ -753,6 +764,8 @@ init_elems(Rq_coll * clp)
     int k;
     Rq_elem * rep;
 
+    printf("JIYOU %s()\n", __func__);
+
     clp->wr_posp = &clp->elem[0]; /* making ring buffer */
     clp->rd_posp = clp->wr_posp;
     if (clp->iflag.mmap || clp->oflag.mmap) {
@@ -805,6 +818,8 @@ remove_elems(Rq_coll * clp)
     Rq_elem * rep;
     int k;
 
+    printf("JIYOU %s()\n", __func__);
+
     for (k = 0; k < sgq_num_elems; ++k) {
         rep = &clp->elem[k];
         if (rep->free_buffp)
@@ -820,6 +835,8 @@ start_read(Rq_coll * clp)
     int buf_sz, res;
     char ebuff[EBUFF_SZ];
 
+    printf("JIYOU %s()\n", __func__);
+
     if (clp->debug > 5)
         pr2serr("%s: elem idx=%zd\n", __func__, rep - clp->elem);
     rep->wr = false;
@@ -828,6 +845,7 @@ start_read(Rq_coll * clp)
     clp->in_blk += blocks;
     clp->in_count -= blocks;
     if (clp->in_is_sg) {
+        printf("JIYOU sg_start_io()\n");
         res = sg_start_io(clp, rep);
         if (1 == res) {     /* ENOMEM, find what's available+try that */
             if ((res = ioctl(clp->infd, SG_GET_RESERVED_SIZE, &buf_sz)) < 0) {
@@ -849,8 +867,8 @@ start_read(Rq_coll * clp)
             rep->state = SGQ_IO_ERR;
             return res;
         }
-    }
-    else {
+    } else {
+        printf("JIYOU normal read()\n");
         rep->state = SGQ_IO_STARTED;
         while (((res = read(clp->infd, rep->buffp, blocks * clp->bs)) < 0) &&
                (EINTR == errno))
@@ -891,6 +909,8 @@ start_write(Rq_coll * clp)
     Rq_elem * rep = clp->wr_posp;
     int res, blocks;
     char ebuff[EBUFF_SZ];
+
+    printf("JIYOU %s()\n", __func__);
 
     while ((0 != rep->wr) || (SGQ_IO_FINISHED != rep->state)) {
         rep = rep->nextp;
@@ -948,6 +968,8 @@ do_sigwait(Rq_coll * clp, bool inc1_clear0)
     siginfo_t info;
     struct timespec ts;
 
+    printf("JIYOU %s()\n", __func__);
+
     if (clp->debug > 9)
         pr2serr("%s: inc1_clear0=%d\n", __func__, (int)inc1_clear0);
     ts.tv_sec = 0;
@@ -989,6 +1011,8 @@ do_num_poll_in(Rq_coll * clp, int fd, bool is_evfd)
 {
     int err;
     struct pollfd a_pollfd = {0, POLLIN | POLLOUT, 0};
+
+    printf("JIYOU %s()\n", __func__);
 
     if (! clp->no_sig) {
         if (clp->sigs_waiting) {
@@ -1040,6 +1064,8 @@ can_read_write(Rq_coll * clp)
     int num;
     int ofd = out_is_evfd ? clp->out_evfd : clp->outfd;
     int ifd= in_is_evfd ? clp->in_evfd : clp->infd;
+
+    printf("JIYOU %s()\n", __func__);
 
     /* if write completion pending, then complete it + start read */
     if (clp->out_is_sg) {
@@ -1167,6 +1193,8 @@ process_flags(const char * arg, struct flags_t * fp)
     char buff[256];
     char * cp;
     char * np;
+
+    printf("JIYOU %s()\n", __func__);
 
     strncpy(buff, arg, sizeof(buff));
     buff[sizeof(buff) - 1] = '\0';
