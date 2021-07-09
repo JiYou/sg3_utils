@@ -377,8 +377,9 @@ static int do_poll(Rq_coll *clp, int timeout, int *req_indexp) {
     if (res > 0) {
       for (k = 0; k < clp->num_rq_elems; ++k) {
         if (out_pollfd_arr[k].revents & POLLIN) {
-          if (req_indexp)
+          if (req_indexp) {
             *req_indexp = k;
+          }
           return QS_OUT_POLL;
         }
       }
@@ -389,7 +390,7 @@ static int do_poll(Rq_coll *clp, int timeout, int *req_indexp) {
     while (((res = poll(in_pollfd_arr, clp->num_rq_elems, timeout)) < 0) &&
            (EINTR == errno))
       ;
-    
+
     assert(res >= 0);
 
     if (res > 0) {
@@ -528,13 +529,6 @@ static int sg_start_io(Rq_elem *rep) {
   hp->pack_id = rep->blk;
   if (rep->dio)
     hp->flags |= SG_FLAG_DIRECT_IO;
-  if (rep->debug > 8) {
-    fprintf(stderr, "sg_start_io: SCSI %s, blk=%d num_blks=%d\n",
-            rep->wr ? "WRITE" : "READ", rep->blk, rep->num_blks);
-    sg_print_command(hp->cmdp);
-    fprintf(stderr, " len=%d, dxfrp=%p, cmd_len=%d\n", hp->dxfer_len,
-            hp->dxferp, hp->cmd_len);
-  }
 
   while (((res = write(rep->wr ? rep->outfd : rep->infd, hp,
                        sizeof(sg_io_hdr_t))) < 0) &&
@@ -704,38 +698,6 @@ static int prepare_rq_elems(Rq_coll *clp, const char *inf, const char *outf) {
       rep->outfd = clp->outfd;
   }
   return 0;
-}
-
-/* Returns a "QS" code and req index, or QS_IDLE and position of first idle
-   (-1 if no idle position). Returns -1 on poll error. */
-static int decider(Rq_coll *clp, int *req_indexp) {
-  int res = 0;
-  Rq_elem *rep;
-  int first_idle_index = -1;
-  int lowest_blk_index = -1;
-
-  rep = clp->req_arr;
-  switch(rep->qstate) {
-    case QS_IN_STARTED:
-    case QS_OUT_STARTED:
-      res = do_poll(clp, 0, req_indexp);
-      if (res) {
-        return res;
-      }
-      assert(res == 0);
-      assert(first_idle_index == -1);
-      *req_indexp = -1;
-      return QS_IDLE;
-    case QS_IN_FINISHED:
-      *req_indexp = 0;
-      return QS_IN_FINISHED;
-    case QS_IDLE:
-      first_idle_index = 0;
-      *req_indexp = 0;
-      break;
-  }
-
-  return QS_IDLE;
 }
 
 int main(int argc, char *argv[]) {
@@ -1063,36 +1025,55 @@ int main(int argc, char *argv[]) {
   int pre_state = -1;
 
   while (rcoll.out_done_count > 0) { /* >>>>>>>>> main loop */
+
     req_index = -1;
-    qstate = decider(&rcoll, &req_index);
+    switch (rcoll.req_arr->qstate) {
+    case QS_IN_STARTED:
+
+    case QS_OUT_STARTED:
+      res = do_poll(&rcoll, 0, &req_index);
+      if (res) {
+        qstate = res;
+      } else {
+        assert(res == 0);
+        qstate = QS_IDLE;
+      }
+      break;
+    case QS_IN_FINISHED:
+      req_index = 0;
+      qstate = QS_IN_FINISHED;
+      break;
+    case QS_IDLE:
+      req_index = 0;
+      qstate = QS_IDLE;
+      break;
+    }
 
     if (qstate == pre_state && pre_state == QS_IDLE) {
     } else {
-          print_state_name(qstate);
+      print_state_name(qstate);
     }
     pre_state = qstate;
 
-    printf("req_index = %d\n", req_index);
-
     rep = (req_index < 0) ? NULL : (rcoll.req_arr + req_index);
-
-    printf("rep = %s\n", rep == NULL ? "NULL" : "OK");
 
     switch (qstate) {
     case QS_IDLE:
-      // 需要退出
       if ((NULL == rep) || (rcoll.in_count <= 0)) {
+        // break switch
         break;
       }
 
       // 这里先是读数据
-      blocks = (rcoll.in_count > rcoll.bpt) ? rcoll.bpt : rcoll.in_count;
+      blocks = 1;
       rep->wr = 0;
       rep->blk = rcoll.in_blk;
       rep->num_blks = blocks;
       rcoll.in_blk += blocks;
       rcoll.in_count -= blocks;
 
+      // 这里会去改变状态
+      // QS_OUT_STARTED : QS_IN_STARTED;
       res = sg_start_io(rep);
       assert(!res);
       break;
