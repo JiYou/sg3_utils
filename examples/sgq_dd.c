@@ -193,6 +193,8 @@ static char *version_str = "0.63 20190324";
 #define QS_IN_STARTED 1  /* commenced read */
 #define QS_IN_FINISHED 2 /* finished read, ready for write */
 #define QS_OUT_STARTED 3 /* commenced write */
+#define QS_IN_POLL 11
+#define QS_OUT_POLL 12
 
 static void print_state_name(int x) {
   if (x == QS_IDLE) {
@@ -203,11 +205,12 @@ static void print_state_name(int x) {
     printf("QS_IN_FINISHED\n");
   } else if (x == QS_OUT_STARTED) {
     printf("QS_OUT_STARTED\n");
+  } else if (x == QS_IN_POLL) {
+    printf("QS_IN_POLL\n");
+  } else if (x == QS_OUT_POLL) {
+    printf("QS_OUT_POLL\n");
   }
 }
-
-#define QS_IN_POLL 11
-#define QS_OUT_POLL 12
 
 #define STR_SZ 1024
 #define INOUTF_SZ 512
@@ -369,12 +372,9 @@ static int do_poll(Rq_coll *clp, int timeout, int *req_indexp) {
            (EINTR == errno))
       ;
 
-    if (res < 0) {
-      perror("poll error on output fds");
-      return -1;
-    }
+    assert(res >= 0);
 
-    else if (res > 0) {
+    if (res > 0) {
       for (k = 0; k < clp->num_rq_elems; ++k) {
         if (out_pollfd_arr[k].revents & POLLIN) {
           if (req_indexp)
@@ -384,14 +384,15 @@ static int do_poll(Rq_coll *clp, int timeout, int *req_indexp) {
       }
     }
   }
+
   if (FT_SG == clp->in_type) {
     while (((res = poll(in_pollfd_arr, clp->num_rq_elems, timeout)) < 0) &&
            (EINTR == errno))
       ;
-    if (res < 0) {
-      perror("poll error on input fds");
-      return -1;
-    } else if (res > 0) {
+    
+    assert(res >= 0);
+
+    if (res > 0) {
       for (k = 0; k < clp->num_rq_elems; ++k) {
         if (in_pollfd_arr[k].revents & POLLIN) {
           if (req_indexp)
@@ -707,7 +708,7 @@ static int prepare_rq_elems(Rq_coll *clp, const char *inf, const char *outf) {
 
 /* Returns a "QS" code and req index, or QS_IDLE and position of first idle
    (-1 if no idle position). Returns -1 on poll error. */
-static int decider(Rq_coll *clp, int first_xfer, int *req_indexp) {
+static int decider(Rq_coll *clp, int *req_indexp) {
   int k, res;
   Rq_elem *rep;
   int first_idle_index = -1;
@@ -716,9 +717,10 @@ static int decider(Rq_coll *clp, int first_xfer, int *req_indexp) {
   int try_poll = 0;
   int lowest_blk = INT_MAX;
 
-  times = first_xfer ? 1 : clp->num_rq_elems;
+  times = 1;
   for (k = 0; k < times; ++k) {
     rep = &clp->req_arr[k];
+    printf("rep->blk = %d, number = %d\n", rep->blk, rep->num_blks);
     if ((QS_IN_STARTED == rep->qstate) || (QS_OUT_STARTED == rep->qstate))
       try_poll = 1;
     else if ((QS_IN_FINISHED == rep->qstate) && (rep->blk < lowest_blk)) {
@@ -727,6 +729,7 @@ static int decider(Rq_coll *clp, int first_xfer, int *req_indexp) {
     } else if ((QS_IDLE == rep->qstate) && (first_idle_index < 0))
       first_idle_index = k;
   }
+
   if (try_poll) {
     res = do_poll(clp, 0, req_indexp);
     if (0 != res)
@@ -768,7 +771,8 @@ int main(int argc, char *argv[]) {
   int num_threads = DEF_NUM_THREADS;
   int gen = 0;
   int do_time = 0;
-  int in_sect_sz, out_sect_sz, first_xfer, qstate, req_index, seek_skip;
+  int in_sect_sz, out_sect_sz;
+  int qstate, req_index, seek_skip;
   int blocks, stop_after_write, terminate;
   char ebuff[EBUFF_SZ];
   Rq_elem *rep;
@@ -1057,7 +1061,6 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  first_xfer = 1;
   stop_after_write = 0;
   terminate = 0;
   seek_skip = rcoll.seek - rcoll.skip;
@@ -1070,36 +1073,29 @@ int main(int argc, char *argv[]) {
   printf("input use SG = %d\n", FT_SG == rcoll.in_type);
   printf("output use SG = %d\n", FT_SG == rcoll.out_type);
 
-
   int access_count = 0;
+
+  int pre_state = -1;
 
   while (rcoll.out_done_count > 0) { /* >>>>>>>>> main loop */
     req_index = -1;
-    qstate = decider(&rcoll, first_xfer, &req_index);
+    qstate = decider(&rcoll, &req_index);
 
-    print_state_name(qstate);
+    if (qstate == pre_state && pre_state == QS_IDLE) {
+      
+    } else {
+          print_state_name(qstate);
+    }
+
+    pre_state = qstate;
+
+
 
     rep = (req_index < 0) ? NULL : (rcoll.req_arr + req_index);
     switch (qstate) {
     case QS_IDLE:
       // 需要退出
       if ((NULL == rep) || (rcoll.in_count <= 0)) {
-        // 这里只是break switch
-        printf(" break\n");
-        break;
-      }
-
-      access_count++;
-
-      assert(access_count == 1);
-
-      if (first_xfer >= 2) {
-        first_xfer = 0;
-      } else if (1 == first_xfer) {
-        ++first_xfer;
-      }
-      if (stop_after_write) {
-        terminate = 1;
         break;
       }
 
@@ -1116,76 +1112,27 @@ int main(int argc, char *argv[]) {
       break;
 
     case QS_IN_FINISHED:
-      if ((rep->blk + seek_skip) != rcoll.out_blk) {
-        assert(0);
-        /* if write would be out of sequence then wait */
-        if (rcoll.debug > 4)
-          fprintf(stderr, "    sgq_dd: QS_IN_FINISHED, "
-                          "out of sequence\n");
-        usleep(200);
-        break;
-      }
       rep->wr = 1;
       rep->blk = rcoll.out_blk;
       blocks = rep->num_blks;
       rcoll.out_blk += blocks;
       rcoll.out_count -= blocks;
 
-      if (FT_SG == rcoll.out_type) {
-        res = sg_start_io(rep);
-        if (0 != res) {
-          if (1 == res)
-            fprintf(stderr, "Out of memory starting sg io\n");
-          terminate = 1;
-        }
-      } else {
-        assert(0);
-      }
+      res = sg_start_io(rep);
+      assert(res == 0);
       break;
     case QS_IN_POLL:
-      if (rcoll.debug > 8)
-        fprintf(stderr,
-                "    sgq_dd: state is QS_IN_POLL, "
-                "req_index=%d\n",
-                req_index);
       res = sg_fin_in_operation(&rcoll, rep);
-      if (res < 0)
-        terminate = 1;
-      else if (res > 1) {
-        if (first_xfer) {
-          /* only retry on first xfer */
-          if (0 != sg_start_io(rep))
-            terminate = 1;
-        } else
-          terminate = 1;
-      }
+      assert(res == 0);
       break;
     case QS_OUT_POLL:
-      if (rcoll.debug > 8)
-        fprintf(stderr,
-                "    sgq_dd: state is QS_OUT_POLL, "
-                "req_index=%d\n",
-                req_index);
       res = sg_fin_out_operation(&rcoll, rep);
-      if (res < 0)
-        terminate = 1;
-      else if (res > 1) {
-        if (first_xfer) {
-          /* only retry on first xfer */
-          if (0 != sg_start_io(rep))
-            terminate = 1;
-        } else
-          terminate = 1;
-      }
+      assert(res == 0);
       break;
     default:
-      if (rcoll.debug > 8)
-        fprintf(stderr, "    sgq_dd: state is ?????\n");
-      terminate = 1;
+      assert(0);
       break;
     }
-    if (terminate)
-      break;
   } /* >>>>>>>>>>>>> end of main loop */
 
   if ((do_time) && (start_tm.tv_sec || start_tm.tv_usec)) {
