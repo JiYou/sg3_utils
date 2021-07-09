@@ -449,34 +449,6 @@ static int read_capacity(int sg_fd, int *num_sect, int *sect_sz) {
   return 0;
 }
 
-/* Returns 1 for retryable, 0 for ok, -ve for error */
-static int sg_fin_out_operation(Rq_coll *clp, Rq_elem *rep) {
-  int res;
-
-  rep->qstate = QS_IDLE;
-  res = sg_finish_io(rep->wr, rep);
-  if (res < 0) {
-    if (clp->coe) {
-      fprintf(stderr,
-              ">> ignored error for out blk=%d for "
-              "%d bytes\n",
-              rep->blk, rep->num_blks * rep->bs);
-      res = 0;
-    } else {
-      fprintf(stderr, "error finishing sg out command\n");
-      return res;
-    }
-  }
-  if (0 == res) {
-    if (rep->dio_incomplete || rep->resid) {
-      clp->dio_incomplete += rep->dio_incomplete;
-      clp->sum_of_resids += rep->resid;
-    }
-    clp->out_done_count -= rep->num_blks;
-  }
-  return res;
-}
-
 static int sg_start_io(Rq_elem *rep) {
   sg_io_hdr_t *hp = &rep->io_hdr;
   int res;
@@ -518,12 +490,8 @@ static int sg_finish_io(int wr, Rq_elem *rep) {
   int res;
   sg_io_hdr_t io_hdr;
   sg_io_hdr_t *hp;
-#if 0
-    static int testing = 0;     /* thread dubious! */
-#endif
 
   memset(&io_hdr, 0, sizeof(sg_io_hdr_t));
-  /* FORCE_PACK_ID active set only read packet with matching pack_id */
   io_hdr.interface_id = 'S';
   io_hdr.dxfer_direction = rep->wr ? SG_DXFER_TO_DEV : SG_DXFER_FROM_DEV;
   io_hdr.pack_id = rep->blk;
@@ -532,45 +500,22 @@ static int sg_finish_io(int wr, Rq_elem *rep) {
                       sizeof(sg_io_hdr_t))) < 0) &&
          (EINTR == errno))
     ;
-  if (res < 0) {
-    perror("finishing io on sg device, error");
-    return -1;
-  }
-  if (rep != (Rq_elem *)io_hdr.usr_ptr) {
-    fprintf(stderr, "sg_finish_io: bad usr_ptr, request-response mismatch\n");
-    exit(1);
-  }
+
   memcpy(&rep->io_hdr, &io_hdr, sizeof(sg_io_hdr_t));
   hp = &rep->io_hdr;
 
-  switch (sg_err_category3(hp)) {
-  case SG_LIB_CAT_CLEAN:
-    break;
-  case SG_LIB_CAT_RECOVERED:
-    fprintf(stderr, "Recovered error on block=%d, num=%d\n", rep->blk,
-            rep->num_blks);
-    break;
-  case SG_LIB_CAT_UNIT_ATTENTION:
-    return 1;
-  default: {
-    char ebuff[EBUFF_SZ];
-    snprintf(ebuff, EBUFF_SZ, "%s blk=%d", rep->wr ? "writing" : "reading",
-             rep->blk);
-    sg_chk_n_print3(ebuff, hp, 1);
-    return -1;
-  }
-  }
-#if 0
-    if (0 == (++testing % 100)) return -1;
-#endif
+  assert(sg_err_category3(hp) == SG_LIB_CAT_CLEAN);
+
+  // 我们并不需要这个!
   if (rep->dio && ((hp->info & SG_INFO_DIRECT_IO_MASK) != SG_INFO_DIRECT_IO))
     rep->dio_incomplete = 1; /* count dios done as indirect IO */
-  else
+  else {
     rep->dio_incomplete = 0;
+  }
+
   rep->resid = hp->resid;
-  if (rep->debug > 8)
-    fprintf(stderr, "sg_finish_io: completed %s, blk=%d\n",
-            wr ? "WRITE" : "READ", rep->blk);
+
+  printf("rep->resid = %d\n", hp->resid);
   return 0;
 }
 
@@ -1043,7 +988,7 @@ int main(int argc, char *argv[]) {
     case QS_IDLE:
       // 这里先是读数据
       blocks = 1;
-      rep->wr = 0;
+      rep->wr = 0; // 这里是读
       rep->blk = rcoll.in_blk;
       rep->num_blks = blocks;
       rcoll.in_blk += blocks;
@@ -1062,7 +1007,6 @@ int main(int argc, char *argv[]) {
       blocks = rep->num_blks;
       rcoll.out_blk += blocks;
       rcoll.out_count -= blocks;
-
       res = sg_start_io(rep);
       assert(res == 0);
       break;
@@ -1071,11 +1015,14 @@ int main(int argc, char *argv[]) {
       // res = sg_fin_in_operation(&rcoll, rep);
       rep->qstate = QS_IN_FINISHED;
       res = sg_finish_io(rep->wr, rep);
+      rcoll.in_done_count--;
       assert(res == 0);
       break;
     case QS_OUT_POLL:
       // 等写完
-      res = sg_fin_out_operation(&rcoll, rep);
+      rep->qstate = QS_IDLE;
+      res = sg_finish_io(rep->wr, rep);
+      rcoll.out_done_count--;
       assert(res == 0);
       break;
     default:
