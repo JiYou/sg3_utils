@@ -510,10 +510,6 @@ static int sg_finish_io(int wr, Rq_elem *rep) {
   else {
     rep->dio_incomplete = 0;
   }
-
-  rep->resid = hp->resid;
-
-  printf("rep->resid = %d\n", hp->resid);
   return 0;
 }
 
@@ -938,6 +934,10 @@ int main(int argc, char *argv[]) {
   int pre_state = -1;
   sg_io_hdr_t *hp = NULL;
 
+
+  int read_package_id = 0;
+  int write_package_id = 0;
+
   // 这里我们统一下工作的流程
   // Read
   // poll
@@ -947,7 +947,14 @@ int main(int argc, char *argv[]) {
   // poll
   // sg_finish_io
   while (rcoll.out_done_count > 0) {
+    uint8_t cmd[10];
+    uint8_t sb[32];
+
+    read_package_id++;
+    write_package_id++;
+
     printf("item to write = %d\n", rcoll.out_done_count);
+
     rep = (rcoll.req_arr + req_index);
     // read
     {
@@ -964,23 +971,23 @@ int main(int argc, char *argv[]) {
       hp = &rep->io_hdr;
       rep->qstate = QS_IN_STARTED;
 
-      memset(rep->cmd, 0, sizeof(rep->cmd));
-      rep->cmd[0] = rep->wr ? SGP_WRITE10 : SGP_READ10;
-      sg_put_unaligned_be32((uint32_t)rep->blk, rep->cmd + 2);
-      sg_put_unaligned_be16((uint16_t)rep->num_blks, rep->cmd + 7);
+      memset(cmd, 0, sizeof(cmd));
+      cmd[0] = rep->wr ? SGP_WRITE10 : SGP_READ10;
+      sg_put_unaligned_be32((uint32_t)rep->blk, cmd + 2);
+      sg_put_unaligned_be16((uint16_t)rep->num_blks, cmd + 7);
 
       memset(hp, 0, sizeof(sg_io_hdr_t));
       hp->interface_id = 'S';
-      hp->cmd_len = sizeof(rep->cmd);
-      hp->cmdp = rep->cmd;
+      hp->cmd_len = sizeof(cmd);
+      hp->cmdp = cmd;
       hp->dxfer_direction = rep->wr ? SG_DXFER_TO_DEV : SG_DXFER_FROM_DEV;
       hp->dxfer_len = rep->bs * rep->num_blks;
       hp->dxferp = rep->buffp;
-      hp->mx_sb_len = sizeof(rep->sb);
-      hp->sbp = rep->sb;
+      hp->mx_sb_len = sizeof(sb);
+      hp->sbp = sb;
       hp->timeout = DEF_TIMEOUT;
       hp->usr_ptr = NULL;
-      hp->pack_id = rep->blk;
+      hp->pack_id = read_package_id;
 
       if (rep->dio) {
         hp->flags |= SG_FLAG_DIRECT_IO;
@@ -1023,8 +1030,38 @@ int main(int argc, char *argv[]) {
       blocks = rep->num_blks;
       rcoll.out_blk += blocks;
       rcoll.out_count -= blocks;
-      res = sg_start_io(rep);
-      assert(res == 0);
+      // 这里会去改变状态
+      // QS_OUT_STARTED : QS_IN_STARTED;
+      hp = &rep->io_hdr;
+      rep->qstate = QS_IN_STARTED;
+
+      memset(rep->cmd, 0, sizeof(rep->cmd));
+      rep->cmd[0] = rep->wr ? SGP_WRITE10 : SGP_READ10;
+      sg_put_unaligned_be32((uint32_t)rep->blk, rep->cmd + 2);
+      sg_put_unaligned_be16((uint16_t)rep->num_blks, rep->cmd + 7);
+
+      memset(hp, 0, sizeof(sg_io_hdr_t));
+      hp->interface_id = 'S';
+      hp->cmd_len = sizeof(rep->cmd);
+      hp->cmdp = rep->cmd;
+      hp->dxfer_direction = rep->wr ? SG_DXFER_TO_DEV : SG_DXFER_FROM_DEV;
+      hp->dxfer_len = rep->bs * rep->num_blks;
+      hp->dxferp = rep->buffp;
+      hp->mx_sb_len = sizeof(rep->sb);
+      hp->sbp = rep->sb;
+      hp->timeout = DEF_TIMEOUT;
+      hp->usr_ptr = NULL;
+      hp->pack_id = rep->blk;
+
+      if (rep->dio) {
+        hp->flags |= SG_FLAG_DIRECT_IO;
+      }
+
+      while (((res = write(rep->wr ? rep->outfd : rep->infd, hp,
+                           sizeof(sg_io_hdr_t))) < 0) &&
+             (EINTR == errno))
+        ;
+      assert(res > 0);
     }
 
     // poll
