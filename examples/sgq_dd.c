@@ -194,6 +194,18 @@ static char *version_str = "0.63 20190324";
 #define QS_IN_FINISHED 2 /* finished read, ready for write */
 #define QS_OUT_STARTED 3 /* commenced write */
 
+static void print_state_name(int x) {
+  if (x == QS_IDLE) {
+    printf("QS_IDLE\n");
+  } else if (x == QS_IN_STARTED) {
+    printf("QS_IN_STARTED\n");
+  } else if (x == QS_IN_FINISHED) {
+    printf("QS_IN_FINISHED\n");
+  } else if (x == QS_OUT_STARTED) {
+    printf("QS_OUT_STARTED\n");
+  }
+}
+
 #define QS_IN_POLL 11
 #define QS_OUT_POLL 12
 
@@ -1058,17 +1070,28 @@ int main(int argc, char *argv[]) {
   printf("input use SG = %d\n", FT_SG == rcoll.in_type);
   printf("output use SG = %d\n", FT_SG == rcoll.out_type);
 
+
+  int access_count = 0;
+
   while (rcoll.out_done_count > 0) { /* >>>>>>>>> main loop */
     req_index = -1;
     qstate = decider(&rcoll, first_xfer, &req_index);
+
+    print_state_name(qstate);
+
     rep = (req_index < 0) ? NULL : (rcoll.req_arr + req_index);
     switch (qstate) {
     case QS_IDLE:
       // 需要退出
       if ((NULL == rep) || (rcoll.in_count <= 0)) {
         // 这里只是break switch
+        printf(" break\n");
         break;
       }
+
+      access_count++;
+
+      assert(access_count == 1);
 
       if (first_xfer >= 2) {
         first_xfer = 0;
@@ -1080,6 +1103,7 @@ int main(int argc, char *argv[]) {
         break;
       }
 
+      // 这里先是读数据
       blocks = (rcoll.in_count > rcoll.bpt) ? rcoll.bpt : rcoll.in_count;
       rep->wr = 0;
       rep->blk = rcoll.in_blk;
@@ -1087,21 +1111,13 @@ int main(int argc, char *argv[]) {
       rcoll.in_blk += blocks;
       rcoll.in_count -= blocks;
 
-      if (FT_SG == rcoll.in_type) {
-        printf("sg_start_io\n");
-        res = sg_start_io(rep);
-        if (0 != res) {
-          if (1 == res) {
-            fprintf(stderr, "Out of memory starting sg io\n");
-          }
-          terminate = 1;
-        }
-      } else {
-        assert(0);
-      }
+      res = sg_start_io(rep);
+      assert(!res);
       break;
+
     case QS_IN_FINISHED:
       if ((rep->blk + seek_skip) != rcoll.out_blk) {
+        assert(0);
         /* if write would be out of sequence then wait */
         if (rcoll.debug > 4)
           fprintf(stderr, "    sgq_dd: QS_IN_FINISHED, "
