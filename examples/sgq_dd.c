@@ -709,47 +709,32 @@ static int prepare_rq_elems(Rq_coll *clp, const char *inf, const char *outf) {
 /* Returns a "QS" code and req index, or QS_IDLE and position of first idle
    (-1 if no idle position). Returns -1 on poll error. */
 static int decider(Rq_coll *clp, int *req_indexp) {
-  int k, res;
+  int res = 0;
   Rq_elem *rep;
   int first_idle_index = -1;
   int lowest_blk_index = -1;
-  int times;
-  int try_poll = 0;
-  int lowest_blk = INT_MAX;
 
-  times = 1;
-  for (k = 0; k < times; ++k) {
-    rep = &clp->req_arr[k];
-    printf("rep->blk = %d, number = %d\n", rep->blk, rep->num_blks);
-    if ((QS_IN_STARTED == rep->qstate) || (QS_OUT_STARTED == rep->qstate))
-      try_poll = 1;
-    else if ((QS_IN_FINISHED == rep->qstate) && (rep->blk < lowest_blk)) {
-      lowest_blk = rep->blk;
-      lowest_blk_index = k;
-    } else if ((QS_IDLE == rep->qstate) && (first_idle_index < 0))
-      first_idle_index = k;
+  rep = clp->req_arr;
+  switch(rep->qstate) {
+    case QS_IN_STARTED:
+    case QS_OUT_STARTED:
+      res = do_poll(clp, 0, req_indexp);
+      if (res) {
+        return res;
+      }
+      assert(res == 0);
+      assert(first_idle_index == -1);
+      *req_indexp = -1;
+      return QS_IDLE;
+    case QS_IN_FINISHED:
+      *req_indexp = 0;
+      return QS_IN_FINISHED;
+    case QS_IDLE:
+      first_idle_index = 0;
+      *req_indexp = 0;
+      break;
   }
 
-  if (try_poll) {
-    res = do_poll(clp, 0, req_indexp);
-    if (0 != res)
-      return res;
-  }
-
-  if (lowest_blk_index >= 0) {
-    if (req_indexp)
-      *req_indexp = lowest_blk_index;
-    return QS_IN_FINISHED;
-  }
-#if 0
-    if (try_poll) {
-        res = do_poll(clp, 2, req_indexp);
-        if (0 != res)
-            return res;
-    }
-#endif
-  if (req_indexp)
-    *req_indexp = first_idle_index;
   return QS_IDLE;
 }
 
@@ -1082,16 +1067,17 @@ int main(int argc, char *argv[]) {
     qstate = decider(&rcoll, &req_index);
 
     if (qstate == pre_state && pre_state == QS_IDLE) {
-      
     } else {
           print_state_name(qstate);
     }
-
     pre_state = qstate;
 
-
+    printf("req_index = %d\n", req_index);
 
     rep = (req_index < 0) ? NULL : (rcoll.req_arr + req_index);
+
+    printf("rep = %s\n", rep == NULL ? "NULL" : "OK");
+
     switch (qstate) {
     case QS_IDLE:
       // 需要退出
