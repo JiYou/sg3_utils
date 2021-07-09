@@ -935,56 +935,22 @@ int main(int argc, char *argv[]) {
   printf("output use SG = %d\n", FT_SG == rcoll.out_type);
 
   int access_count = 0;
-
   int pre_state = -1;
   sg_io_hdr_t *hp = NULL;
 
-  while (rcoll.out_done_count > 0) { /* >>>>>>>>> main loop */
-    req_index = -1;
+  // 这里我们统一下工作的流程
+  // Read
+  // poll
+  // sg_finish_io -> 看一下读完没有
 
-    switch (rcoll.req_arr->qstate) {
-    case QS_IN_STARTED:
-      // 如果读完之后
-      // 这里需要poll
-      // 那么我们就poll一下。
-      while ((((res = poll(in_pollfd_arr, 1, 0)) < 0) && (EINTR == errno)) ||
-             (0 == res))
-        ;
-      assert(res > 0);
-      assert(in_pollfd_arr[0].revents & POLLIN);
-      req_index = 0;
-      qstate = QS_IN_POLL;
-      break;
-    case QS_OUT_STARTED:
-      while ((((res = poll(out_pollfd_arr, 1, 0)) < 0) && (EINTR == errno)) ||
-             (0 == res))
-        ;
-      assert(res > 0);
-      assert(out_pollfd_arr[0].revents & POLLIN);
-      req_index = 0;
-      qstate = QS_OUT_POLL;
-      break;
-    case QS_IN_FINISHED:
-      req_index = 0;
-      qstate = QS_IN_FINISHED;
-      break;
-    case QS_IDLE:
-      req_index = 0;
-      qstate = QS_IDLE;
-      break;
-    }
-
-    if (qstate == pre_state && pre_state == QS_IDLE) {
-    } else {
-      print_state_name(qstate);
-    }
-    pre_state = qstate;
-
-    assert(req_index == 0);
+  // Write
+  // poll
+  // sg_finish_io
+  while (rcoll.out_done_count > 0) {
+    printf("item to write = %d\n", rcoll.out_done_count);
     rep = (rcoll.req_arr + req_index);
-
-    switch (qstate) {
-    case QS_IDLE:
+    // read
+    {
       // 这里先是读数据
       blocks = 1;
       rep->wr = 0; // 这里是读
@@ -1025,9 +991,32 @@ int main(int argc, char *argv[]) {
              (EINTR == errno))
         ;
       assert(res >= 0);
-      break;
+    }
 
-    case QS_IN_FINISHED:
+    // wait
+    {
+      // 如果读完之后
+      // 这里需要poll
+      // 那么我们就poll一下。
+      while ((((res = poll(in_pollfd_arr, 1, 0)) < 0) && (EINTR == errno)) ||
+             (0 == res))
+        ;
+      assert(res > 0);
+      assert(in_pollfd_arr[0].revents & POLLIN);
+      req_index = 0;
+      qstate = QS_IN_POLL;
+    }
+
+    // verify read over
+    {
+      rep->qstate = QS_IN_FINISHED;
+      res = sg_finish_io(rep->wr, rep);
+      rcoll.in_done_count--;
+      assert(res == 0);
+    }
+
+    // write
+    {
       // 这里开始写!
       rep->wr = 1;
       rep->blk = rcoll.out_blk;
@@ -1036,27 +1025,28 @@ int main(int argc, char *argv[]) {
       rcoll.out_count -= blocks;
       res = sg_start_io(rep);
       assert(res == 0);
-      break;
-    case QS_IN_POLL:
-      // 等读完
-      // res = sg_fin_in_operation(&rcoll, rep);
-      rep->qstate = QS_IN_FINISHED;
-      res = sg_finish_io(rep->wr, rep);
-      rcoll.in_done_count--;
-      assert(res == 0);
-      break;
-    case QS_OUT_POLL:
+    }
+
+    // poll
+    {
+      while ((((res = poll(out_pollfd_arr, 1, 0)) < 0) && (EINTR == errno)) ||
+             (0 == res))
+        ;
+      assert(res > 0);
+      assert(out_pollfd_arr[0].revents & POLLIN);
+      req_index = 0;
+      qstate = QS_OUT_POLL;
+    }
+
+    // wait write over
+    {
       // 等写完
       rep->qstate = QS_IDLE;
       res = sg_finish_io(rep->wr, rep);
       rcoll.out_done_count--;
       assert(res == 0);
-      break;
-    default:
-      assert(0);
-      break;
     }
-  } /* >>>>>>>>>>>>> end of main loop */
+  }
 
   if ((do_time) && (start_tm.tv_sec || start_tm.tv_usec)) {
     struct timeval res_tm;
