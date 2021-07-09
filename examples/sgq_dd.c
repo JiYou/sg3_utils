@@ -450,35 +450,6 @@ static int read_capacity(int sg_fd, int *num_sect, int *sect_sz) {
 }
 
 /* Returns 1 for retryable, 0 for ok, -ve for error */
-static int sg_fin_in_operation(Rq_coll *clp, Rq_elem *rep) {
-  int res;
-
-  rep->qstate = QS_IN_FINISHED;
-  res = sg_finish_io(rep->wr, rep);
-  if (res < 0) {
-    if (clp->coe) {
-      memset(rep->buffp, 0, rep->num_blks * rep->bs);
-      fprintf(stderr,
-              ">> substituted zeros for in blk=%d for "
-              "%d bytes\n",
-              rep->blk, rep->num_blks * rep->bs);
-      res = 0;
-    } else {
-      fprintf(stderr, "error finishing sg in command\n");
-      return res;
-    }
-  }
-  if (0 == res) { /* looks good, going to return */
-    if (rep->dio_incomplete || rep->resid) {
-      clp->dio_incomplete += rep->dio_incomplete;
-      clp->sum_of_resids += rep->resid;
-    }
-    clp->in_done_count -= rep->num_blks;
-  }
-  return res;
-}
-
-/* Returns 1 for retryable, 0 for ok, -ve for error */
 static int sg_fin_out_operation(Rq_coll *clp, Rq_elem *rep) {
   int res;
 
@@ -1025,19 +996,29 @@ int main(int argc, char *argv[]) {
   int pre_state = -1;
 
   while (rcoll.out_done_count > 0) { /* >>>>>>>>> main loop */
-
     req_index = -1;
+
     switch (rcoll.req_arr->qstate) {
     case QS_IN_STARTED:
-
+      // 如果读完之后
+      // 这里需要poll
+      // 那么我们就poll一下。
+      while ((((res = poll(in_pollfd_arr, 1, 0)) < 0) && (EINTR == errno)) ||
+             (0 == res))
+        ;
+      assert(res > 0);
+      assert(in_pollfd_arr[0].revents & POLLIN);
+      req_index = 0;
+      qstate = QS_IN_POLL;
+      break;
     case QS_OUT_STARTED:
-      res = do_poll(&rcoll, 0, &req_index);
-      if (res) {
-        qstate = res;
-      } else {
-        assert(res == 0);
-        qstate = QS_IDLE;
-      }
+      while ((((res = poll(out_pollfd_arr, 1, 0)) < 0) && (EINTR == errno)) ||
+             (0 == res))
+        ;
+      assert(res > 0);
+      assert(out_pollfd_arr[0].revents & POLLIN);
+      req_index = 0;
+      qstate = QS_OUT_POLL;
       break;
     case QS_IN_FINISHED:
       req_index = 0;
@@ -1055,15 +1036,11 @@ int main(int argc, char *argv[]) {
     }
     pre_state = qstate;
 
-    rep = (req_index < 0) ? NULL : (rcoll.req_arr + req_index);
+    assert(req_index == 0);
+    rep = (rcoll.req_arr + req_index);
 
     switch (qstate) {
     case QS_IDLE:
-      if ((NULL == rep) || (rcoll.in_count <= 0)) {
-        // break switch
-        break;
-      }
-
       // 这里先是读数据
       blocks = 1;
       rep->wr = 0;
@@ -1079,6 +1056,7 @@ int main(int argc, char *argv[]) {
       break;
 
     case QS_IN_FINISHED:
+      // 这里开始写!
       rep->wr = 1;
       rep->blk = rcoll.out_blk;
       blocks = rep->num_blks;
@@ -1089,10 +1067,14 @@ int main(int argc, char *argv[]) {
       assert(res == 0);
       break;
     case QS_IN_POLL:
-      res = sg_fin_in_operation(&rcoll, rep);
+      // 等读完
+      // res = sg_fin_in_operation(&rcoll, rep);
+      rep->qstate = QS_IN_FINISHED;
+      res = sg_finish_io(rep->wr, rep);
       assert(res == 0);
       break;
     case QS_OUT_POLL:
+      // 等写完
       res = sg_fin_out_operation(&rcoll, rep);
       assert(res == 0);
       break;
