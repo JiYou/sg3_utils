@@ -813,6 +813,10 @@ int main(int argc, char *argv[]) {
         perror(ebuff);
         return 1;
       }
+
+      res = read_capacity(rcoll.outfd, &out_num_sect, &out_sect_sz);
+      printf("res = %d, %d : %d\n", res, out_num_sect, out_sect_sz);
+
     } else {
       if (FT_OTHER == rcoll.out_type) {
         if ((rcoll.outfd = open(outf, O_WRONLY | O_CREAT, 0666)) < 0) {
@@ -869,6 +873,7 @@ int main(int argc, char *argv[]) {
     }
     if (FT_SG == rcoll.out_type) {
       res = read_capacity(rcoll.outfd, &out_num_sect, &out_sect_sz);
+      printf("%d : %d\n", out_num_sect, out_sect_sz);
       if (2 == res) {
         fprintf(stderr, "Unit attention, media changed(out), "
                         "repeat\n");
@@ -956,6 +961,8 @@ int main(int argc, char *argv[]) {
     printf("item to write = %d\n", rcoll.out_done_count);
 
     rep = (rcoll.req_arr + req_index);
+    blocks = 1;
+    /*
     // read
     {
       // 这里先是读数据
@@ -1021,13 +1028,15 @@ int main(int argc, char *argv[]) {
       rcoll.in_done_count--;
       assert(res == 0);
     }
+    */
 
     // write
     {
       // 这里开始写!
       rep->wr = 1;
       rep->blk = rcoll.out_blk;
-      blocks = rep->num_blks;
+      rep->num_blks = blocks;
+      // blocks = rep->num_blks;
       rcoll.out_blk += blocks;
       rcoll.out_count -= blocks;
       // 这里会去改变状态
@@ -1112,10 +1121,12 @@ int main(int argc, char *argv[]) {
   if (STDOUT_FILENO != rcoll.outfd)
     close(rcoll.outfd);
   res = 0;
+
   if (0 != rcoll.out_count) {
     fprintf(stderr, ">>>> Some error occurred,\n");
     res = 2;
   }
+
   print_stats();
   if (rcoll.dio_incomplete) {
     int fd;

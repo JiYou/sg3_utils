@@ -14,6 +14,7 @@
  * operating systems.
  */
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -489,6 +490,7 @@ main(int argc, char * argv[])
         res = sg_ll_readcap_10(sg_fd, op->do_pmi, (unsigned int)op->llba,
                                resp_buff, RCAP_REPLY_LEN, true,
                                op->verbose);
+        printf("sg_ll_readcap_10()\n");
         ret = res;
         if (0 == res) {
             if (op->do_hex || op->do_raw) {
@@ -528,19 +530,10 @@ main(int argc, char * argv[])
                     sz_gb = ((double)(last_blk_addr + 1) * block_size) /
                             (double)(1000000000L);
                     printf("Hence:\n");
-#ifdef SG_LIB_MINGW
-                    printf("   Device size: %" PRIu64 " bytes, %g MiB, %g "
-                           "GB", total_sz, sz_mb, sz_gb);
-#else
                     printf("   Device size: %" PRIu64 " bytes, %.1f MiB, "
                            "%.2f GB", total_sz, sz_mb, sz_gb);
-#endif
                     if (sz_gb > 2000) {
-#ifdef SG_LIB_MINGW
-                        printf(", %g TB", sz_gb / 1000);
-#else
                         printf(", %.2f TB", sz_gb / 1000);
-#endif
                     }
                     printf("\n");
                 }
@@ -568,6 +561,7 @@ main(int argc, char * argv[])
             pr2serr("READ CAPACITY (10) failed: %s\n", b);
         }
     }
+
     if (op->do_long) {
         res = sg_ll_readcap_16(sg_fd, op->do_pmi, op->llba, resp_buff,
                                RCAP16_REPLY_LEN, true, op->verbose);
@@ -594,23 +588,30 @@ main(int argc, char * argv[])
             printf("Read Capacity results:\n");
             printf("   Protection: prot_en=%d, p_type=%d, p_i_exponent=%d",
                    prot_en, p_type, ((resp_buff[13] >> 4) & 0xf));
-            if (prot_en)
+
+            if (prot_en) {
                 printf(" [type %d protection]\n", p_type + 1);
-            else
+            } else {
                 printf("\n");
+            }
+
             if (op->do_zbc) {
+                assert(0);
                 int rc_basis = (resp_buff[12] >> 4) & 0x3;
 
                 printf("   ZBC's rc_basis=%d [%s]\n", rc_basis,
                        rc_basis_str(rc_basis, b, sizeof(b)));
             }
+
             printf("   Logical block provisioning: lbpme=%d, lbprz=%d\n",
                    !!(resp_buff[14] & 0x80), !!(resp_buff[14] & 0x40));
-            if (op->do_pmi)
+
+            if (op->do_pmi) {
+                assert(0);
                 printf("   PMI mode: given lba=0x%" PRIx64 ", last lba "
                        "before delay=0x%" PRIx64 "\n", op->llba,
                        llast_blk_addr);
-            else
+            } else
                 printf("   Last LBA=%" PRIu64 " (0x%" PRIx64 "), Number of "
                        "logical blocks=%" PRIu64 "\n", llast_blk_addr,
                        llast_blk_addr, llast_blk_addr + 1);
@@ -635,19 +636,10 @@ main(int argc, char * argv[])
                 sz_gb = ((double)(llast_blk_addr + 1) * block_size) /
                         (double)(1000000000L);
                 printf("Hence:\n");
-#ifdef SG_LIB_MINGW
-                printf("   Device size: %" PRIu64 " bytes, %g MiB, %g GB",
-                       total_sz, sz_mb, sz_gb);
-#else
                 printf("   Device size: %" PRIu64 " bytes, %.1f MiB, %.2f "
                        "GB", total_sz, sz_mb, sz_gb);
-#endif
                 if (sz_gb > 2000) {
-#ifdef SG_LIB_MINGW
-                    printf(", %g TB", sz_gb / 1000);
-#else
                     printf(", %.2f TB", sz_gb / 1000);
-#endif
                 }
                 printf("\n");
             }

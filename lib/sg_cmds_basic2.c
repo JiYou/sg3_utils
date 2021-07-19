@@ -154,12 +154,26 @@ sg_ll_readcap_16(int sg_fd, bool pmi, uint64_t llba, void * resp,
     uint8_t sense_b[SENSE_BUFF_LEN];
     struct sg_pt_base * ptvp;
 
+    printf("pmid = %d\n", pmi);
     if (pmi) { /* lbs only valid when pmi set */
         rc_cdb[14] |= 1;
         sg_put_unaligned_be64(llba, rc_cdb + 2);
     }
+
     /* Allocation length, no guidance in SBC-2 rev 15b */
+    for (int i = 0; i < sizeof(rc_cdb); i++) {
+        printf("%d, ", rc_cdb[i]);
+    }
+    printf("\n");
+
     sg_put_unaligned_be32((uint32_t)mx_resp_len, rc_cdb + 10);
+
+
+    for (int i = 0; i < sizeof(rc_cdb); i++) {
+        printf("%d, ", rc_cdb[i]);
+    }
+    printf("\n");
+
     if (verbose) {
         char b[128];
 

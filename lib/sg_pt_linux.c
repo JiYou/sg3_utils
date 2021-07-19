@@ -1042,7 +1042,14 @@ do_scsi_pt_v3(struct sg_pt_linux_scsi * ptp, int fd, int time_secs,
     v3_hdr.dxfer_direction = SG_DXFER_NONE;
     v3_hdr.cmdp = (uint8_t *)(sg_uintptr_t)ptp->io_hdr.request;
     v3_hdr.cmd_len = (uint8_t)ptp->io_hdr.request_len;
+
+    for (int i = 0; i < v3_hdr.cmd_len; i++) {
+        printf("%d, ", v3_hdr.cmdp[i]);
+    }
+    printf("\n");
+
     if (ptp->io_hdr.din_xfer_len > 0) {
+        printf("JIYOU A\n");
         if (ptp->io_hdr.dout_xfer_len > 0) {
             if (verbose)
                 pr2ws("sgv3 doesn't support bidi\n");
@@ -1052,14 +1059,17 @@ do_scsi_pt_v3(struct sg_pt_linux_scsi * ptp, int fd, int time_secs,
         v3_hdr.dxfer_len = (unsigned int)ptp->io_hdr.din_xfer_len;
         v3_hdr.dxfer_direction =  SG_DXFER_FROM_DEV;
     } else if (ptp->io_hdr.dout_xfer_len > 0) {
+        printf("JIYOU B\n");
         v3_hdr.dxferp = (void *)(long)ptp->io_hdr.dout_xferp;
         v3_hdr.dxfer_len = (unsigned int)ptp->io_hdr.dout_xfer_len;
         v3_hdr.dxfer_direction =  SG_DXFER_TO_DEV;
     }
+
     if (ptp->io_hdr.response && (ptp->io_hdr.max_response_len > 0)) {
         v3_hdr.sbp = (uint8_t *)(sg_uintptr_t)ptp->io_hdr.response;
         v3_hdr.mx_sb_len = (uint8_t)ptp->io_hdr.max_response_len;
     }
+
     v3_hdr.pack_id = (int)ptp->io_hdr.request_extra;
     if (BSG_FLAG_Q_AT_HEAD & ptp->io_hdr.flags)
         v3_hdr.flags |= SG_FLAG_Q_AT_HEAD;      /* favour AT_HEAD */
@@ -1074,6 +1084,64 @@ do_scsi_pt_v3(struct sg_pt_linux_scsi * ptp, int fd, int time_secs,
     /* io_hdr.timeout is in milliseconds, if greater than zero */
     v3_hdr.timeout = ((time_secs > 0) ? (time_secs * 1000) : DEF_TIMEOUT);
     /* Finally do the v3 SG_IO ioctl */
+
+    // print v3_hdr
+
+    // int interface_id;           /* [i] 'S' for SCSI generic (required) */
+    printf("interface_id = \'%c\',\n", v3_hdr.interface_id);
+
+    // int dxfer_direction;        /* [i] data transfer direction  */
+    printf(".dxfer_direction = %d,\n", v3_hdr.dxfer_direction);
+
+    // unsigned char cmd_len;      /* [i] SCSI command length ( <= 16 bytes) */
+    printf(".cmd_len = %d\n", v3_hdr.cmd_len);
+    // unsigned char mx_sb_len;    /* [i] max length to write to sbp */
+    printf(".mx_sb_len = %d\n", v3_hdr.mx_sb_len);
+
+    // unsigned short int iovec_count; /* [i] 0 implies no scatter gather */
+    printf(".iovec_count = %d\n", v3_hdr.iovec_count);
+
+    // unsigned int dxfer_len;     /* [i] byte count of data transfer */
+    printf(".dxfer_len = %d\n", v3_hdr.dxfer_len);
+
+    // void * dxferp;              /* [i], [*io] points to data transfer memory
+	// 			 or scatter gather list */
+
+    // unsigned char * cmdp;       /* [i], [*i] points to command to perform */
+    // unsigned char * sbp;        /* [i], [*o] points to sense_buffer memory */
+    // unsigned int timeout;       /* [i] MAX_UINT->no timeout (unit: millisec) */
+    // unsigned int flags;         /* [i] 0 -> default, see SG_FLAG... */
+    printf(".flags = %d\n", v3_hdr.flags);
+
+    // int pack_id;                /* [i->o] unused internally (normally) */
+    printf(".pack_id = %d\n", v3_hdr.pack_id);
+
+    // void * usr_ptr;             /* [i->o] unused internally */
+    // unsigned char status;       /* [o] scsi status */
+    printf(".status = %d\n", v3_hdr.status);
+    // unsigned char masked_status;/* [o] shifted, masked scsi status */
+    printf(".masked_status = %d\n", v3_hdr.masked_status);
+
+    // unsigned char msg_status;   /* [o] messaging level data (optional) */
+    printf(".msg_status = %d\n", v3_hdr.msg_status);
+
+    // unsigned char sb_len_wr;    /* [o] byte count actually written to sbp */
+    printf(".sb_len_wr = %c\n", v3_hdr.sb_len_wr);
+
+    // unsigned short int host_status; /* [o] errors from host adapter */
+    printf(".host_status = %d\n", v3_hdr.host_status);
+
+    // unsigned short int driver_status;/* [o] errors from software driver */
+    printf(".driver_status = %d\n", v3_hdr.driver_status);
+
+    // int resid;                  /* [o] dxfer_len - actual_transferred */
+    printf(".resid = %d\n", v3_hdr.resid);
+    // unsigned int duration;      /* [o] time taken by cmd (unit: millisec) */
+    printf(".duration = %d\n", v3_hdr.duration);
+    // unsigned int info;          /* [o] auxiliary information */
+    printf(".info = %d\n", v3_hdr.info);
+
+
     if (ioctl(fd, SG_IO, &v3_hdr) < 0) {
         ptp->os_err = errno;
         if (verbose > 1)
@@ -1162,10 +1230,13 @@ do_scsi_pt(struct sg_pt_base * vp, int fd, int time_secs, int verbose)
 #ifdef IGNORE_LINUX_SGV4
         return do_scsi_pt_v3(ptp, fd, time_secs, verbose);
 #else
-        if (ptp->sg_version >= SG_LINUX_SG_VER_V4_BASE)
+        if (ptp->sg_version >= SG_LINUX_SG_VER_V4_BASE) {
+            printf("JIYOU v4\n");
             return do_scsi_pt_v4(ptp, fd, time_secs, verbose);
-        else
+        } else {
+            printf("JIYOU v3\n");
             return do_scsi_pt_v3(ptp, fd, time_secs, verbose);
+        }
 #endif
     } else if (sg_bsg_major <= 0)
         return do_scsi_pt_v3(ptp, fd, time_secs, verbose);

@@ -323,6 +323,7 @@ do_scsi_pt(struct sg_pt_base * vp, int fd, int time_secs, int verbose)
     if (time_secs > 0)
         ptp->uscsi.uscsi_timeout = time_secs;
 
+    printf("JIYOU call ioctl()\n");
     if (ioctl(ptp->dev_fd, USCSICMD, &ptp->uscsi)) {
         ptp->os_err = errno;
         if ((EIO == ptp->os_err) && ptp->uscsi.uscsi_status) {
